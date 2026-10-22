@@ -7,7 +7,7 @@ import { CompetitorsEditor } from "./competitors-editor";
 import { regenerateCompetitorsAction, saveCompetitorsAction } from "../../actions";
 
 export const metadata: Metadata = { title: "Competitors" };
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 export default async function CompetitorsStepPage({ params }: { params: Promise<{ orgSlug: string; projectId: string }> }) {
   const { orgSlug, projectId } = await params;

@@ -10,5 +10,6 @@ export const DEFAULT_ONBOARDING_MODEL = "gpt-4.1-mini";
  */
 export function getOnboardingLLM(env: NodeJS.ProcessEnv = process.env): StructuredLLMClient | null {
   if (!env.OPENAI_API_KEY) return null;
-  return createOpenAIStructuredClient({ apiKey: env.OPENAI_API_KEY, model: env.OPENAI_ONBOARDING_MODEL || DEFAULT_ONBOARDING_MODEL });
+  // 40 s per attempt keeps worst-case retries inside the onboarding routes' maxDuration (300 s).
+  return createOpenAIStructuredClient({ apiKey: env.OPENAI_API_KEY, model: env.OPENAI_ONBOARDING_MODEL || DEFAULT_ONBOARDING_MODEL, timeoutMs: 40_000 });
 }

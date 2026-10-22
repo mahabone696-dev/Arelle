@@ -8,7 +8,7 @@ import { PromptReview } from "./prompt-review";
 import { regeneratePromptsAction, savePromptsAction } from "../../actions";
 
 export const metadata: Metadata = { title: "Review prompts" };
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 const INTENT_ORDER = new Map(PROMPT_INTENTS.map((i, idx) => [i, idx]));
 

@@ -275,3 +275,24 @@ describe("onboarding authorization and validation", () => {
     await expect(savePromptReview(user.id, projectId, { prompts: [{ ...item, approved: true }, { ...item, text: "best crm", approved: true }] })).rejects.toMatchObject({ code: "VALIDATION" });
   });
 });
+
+describe("onboarding review fixes", () => {
+  it("does not create a project when the analysis rate limit is hit", async () => {
+    const { user, org } = await setup("limit@nw.com");
+    const deps: OnboardingDeps = { llm: null, crawl: async (url) => fakeCrawl(new URL(url).hostname) };
+    for (let i = 0; i < 30; i++) await db.websiteAnalysis.create({ data: { project: { create: { organizationId: org.id, name: `p${i}`, domain: `p${i}.com`, country: "US", language: "en", locale: "en-US" } }, requestedUrl: "x" } });
+    const before = await db.project.count({ where: { organizationId: org.id } });
+    await expect(startOnboarding(user.id, org.id, { url: "fresh-domain.com", ...market }, deps)).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" });
+    expect(await db.project.count({ where: { organizationId: org.id } })).toBe(before);
+  });
+
+  it("marks analyses stuck in RUNNING as failed when state is read", async () => {
+    const { user, org } = await setup("stale@nw.com");
+    const deps: OnboardingDeps = { llm: null, crawl: async (url) => fakeCrawl(new URL(url).hostname) };
+    const { projectId } = await startOnboarding(user.id, org.id, { url: "stale.com", ...market }, deps);
+    await db.websiteAnalysis.create({ data: { projectId, requestedUrl: "x", status: "RUNNING", createdAt: new Date(Date.now() - 11 * 60 * 1000) } });
+    const state = await getOnboardingState(user.id, projectId);
+    expect(await db.websiteAnalysis.count({ where: { projectId, status: "RUNNING" } })).toBe(0);
+    expect(state.analysis).toBeTruthy();
+  });
+});

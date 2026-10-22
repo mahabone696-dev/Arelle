@@ -76,11 +76,13 @@ export async function startOnboarding(userId: string, organizationId: string, in
     throw new AppError("CONFLICT", "A project for this website already exists in this organization.", { projectId: existing.id });
   }
 
+  // Check limits before creating anything, so a rate-limited request leaves no empty project behind.
+  await assertCanAnalyze(userId, access.organizationId);
   const projectId = existing
     ? (await updateProject(userId, existing.id, { country: data.country, language: data.language, timezone: data.timezone })).id
     : (await createProject(userId, access.organizationId, { name: normalized.domain, domain: normalized.domain, country: data.country, language: data.language, timezone: data.timezone })).id;
 
-  const analysis = await runWebsiteAnalysis(userId, projectId, deps);
+  const analysis = await runWebsiteAnalysis(userId, projectId, deps, { limitChecked: true });
   return { projectId, analysis };
 }
 
@@ -90,9 +92,9 @@ function pageSummaries(crawl: CrawlResult) {
   return crawl.pages.map((p) => ({ url: p.url, title: p.title, description: p.description.slice(0, 200), h1: p.headings.h1.slice(0, 2), wordCount: p.wordCount }));
 }
 
-export async function runWebsiteAnalysis(userId: string, projectId: string, deps: OnboardingDeps = defaultOnboardingDeps()) {
+export async function runWebsiteAnalysis(userId: string, projectId: string, deps: OnboardingDeps = defaultOnboardingDeps(), options: { limitChecked?: boolean } = {}) {
   const access = await requireProjectAccess(userId, projectId, "project:update");
-  await assertCanAnalyze(userId, access.organizationId);
+  if (!options.limitChecked) await assertCanAnalyze(userId, access.organizationId);
   const project = await db.project.findUniqueOrThrow({ where: { id: projectId }, select: { domain: true, name: true, country: true, language: true, onboardingStep: true } });
   const requestedUrl = `https://${project.domain}/`;
   const analysis = await db.websiteAnalysis.create({ data: { projectId, requestedUrl, createdById: userId }, select: { id: true } });
@@ -400,8 +402,15 @@ export async function savePromptReview(userId: string, projectId: string, input:
 
 // ── Read model ────────────────────────────────────────────────
 
+/** An analysis still RUNNING after this long was cut off (e.g. the request hit its time limit). */
+export const STALE_ANALYSIS_MS = 10 * 60 * 1000;
+
 export async function getOnboardingState(userId: string, projectId: string) {
   const access = await requireProjectAccess(userId, projectId, "project:read");
+  await db.websiteAnalysis.updateMany({
+    where: { projectId, status: "RUNNING", createdAt: { lt: new Date(Date.now() - STALE_ANALYSIS_MS) } },
+    data: { status: "FAILED", errorCode: "TIMEOUT", errorMessage: "The analysis did not finish in time. Please try again.", completedAt: new Date() },
+  });
   const [project, brand, analysis, competitors, prompts] = await Promise.all([
     db.project.findUniqueOrThrow({ where: { id: projectId }, select: { id: true, name: true, domain: true, country: true, language: true, onboardingStep: true, onboardingCompletedAt: true } }),
     db.brand.findUnique({ where: { projectId } }),

@@ -7,7 +7,7 @@ import { startOnboardingAction } from "./actions";
 
 export const metadata: Metadata = { title: "Set up a website" };
 // Website analysis (bounded crawl + one AI extraction) runs inside this request.
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 export default async function OnboardingStartPage({ params }: { params: Promise<{ orgSlug: string }> }) {
   const { orgSlug } = await params;

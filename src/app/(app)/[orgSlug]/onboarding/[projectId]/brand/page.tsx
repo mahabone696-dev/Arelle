@@ -10,7 +10,7 @@ import { ReanalyzeButton } from "./reanalyze-button";
 import { reanalyzeAction, saveBrandAction } from "../../actions";
 
 export const metadata: Metadata = { title: "Brand profile" };
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 interface PageSummary {
   url: string;
