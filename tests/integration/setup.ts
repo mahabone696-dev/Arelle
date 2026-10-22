@@ -2,7 +2,7 @@ import { afterAll, beforeEach } from "vitest";
 import { TEST_DATABASE_URL } from "./global-setup";
 
 process.env.DATABASE_URL = TEST_DATABASE_URL;
-process.env.LOG_LEVEL ??= "warn";
+process.env.LOG_LEVEL ??= "silent";
 process.env.AUTH_SECRET ??= "integration-test-secret-0123456789";
 
 const { db } = await import("@/server/db");

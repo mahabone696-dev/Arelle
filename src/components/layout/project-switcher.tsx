@@ -41,7 +41,7 @@ export function ProjectSwitcher({ orgSlug, projects, currentId }: { orgSlug: str
         ))}
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <Link href={`/${orgSlug}/projects/new`}>
+          <Link href={`/${orgSlug}/onboarding`}>
             <Plus /> New project
           </Link>
         </DropdownMenuItem>

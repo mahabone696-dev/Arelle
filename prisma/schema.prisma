@@ -36,7 +36,23 @@ enum PlanTier {
 enum EntitySource {
   USER
   AI_SUGGESTED
+  // Deterministic template output (no AI involved); shown with a label in the UI.
+  TEMPLATE
   DEMO
+}
+
+enum OnboardingStep {
+  ANALYZE
+  BRAND
+  COMPETITORS
+  PROMPTS
+  COMPLETED
+}
+
+enum WebsiteAnalysisStatus {
+  RUNNING
+  COMPLETED
+  FAILED
 }
 
 enum PromptIntent {
@@ -183,6 +199,7 @@ model User {
   sessions    Session[]
   memberships OrganizationMember[]
   scans       Scan[]               @relation("ScanTriggeredBy")
+  analyses    WebsiteAnalysis[]
   actions     Action[]             @relation("ActionCreatedBy")
   auditLogs   AuditLog[]
 }
@@ -263,17 +280,19 @@ model OrganizationMember {
 // ───────────────────────────── Projects ─────────────────────────────
 
 model Project {
-  id             String    @id @default(cuid())
-  organizationId String
-  name           String
-  domain         String
-  country        String    @db.VarChar(2)
-  language       String    @db.VarChar(8)
-  locale         String    @db.VarChar(35)
-  timezone       String    @default("UTC")
-  archivedAt     DateTime? @db.Timestamptz(3)
-  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
-  updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
+  id                    String         @id @default(cuid())
+  organizationId        String
+  name                  String
+  domain                String
+  country               String         @db.VarChar(2)
+  language              String         @db.VarChar(8)
+  locale                String         @db.VarChar(35)
+  timezone              String         @default("UTC")
+  onboardingStep        OnboardingStep @default(ANALYZE)
+  onboardingCompletedAt DateTime?      @db.Timestamptz(3)
+  archivedAt            DateTime?      @db.Timestamptz(3)
+  createdAt             DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime       @updatedAt @db.Timestamptz(3)
 
   organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   brand               Brand?
@@ -284,6 +303,7 @@ model Project {
   visibilitySnapshots VisibilitySnapshot[]
   opportunities       Opportunity[]
   reportShares        ReportShare[]
+  websiteAnalyses     WebsiteAnalysis[]
 
   @@unique([organizationId, domain])
   @@index([organizationId])
@@ -309,15 +329,18 @@ model Brand {
 }
 
 model Competitor {
-  id        String       @id @default(cuid())
-  projectId String
-  name      String
-  domain    String?
-  aliases   String[]     @default([])
-  isActive  Boolean      @default(true)
-  source    EntitySource @default(USER)
-  createdAt DateTime     @default(now()) @db.Timestamptz(3)
-  updatedAt DateTime     @updatedAt @db.Timestamptz(3)
+  id         String       @id @default(cuid())
+  projectId  String
+  name       String
+  domain     String?
+  aliases    String[]     @default([])
+  // Why it was suggested and how confident the model was (AI suggestions only).
+  reason     String?      @db.Text
+  confidence Float?
+  isActive   Boolean      @default(true)
+  source     EntitySource @default(USER)
+  createdAt  DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime     @updatedAt @db.Timestamptz(3)
 
   project             Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
   mentions            BrandMention[]
@@ -353,6 +376,10 @@ model Prompt {
   opportunityScore Float?
   reason           String?         @db.Text
   isActive         Boolean         @default(true)
+  // Set when a user approves the prompt for tracking; null = not approved.
+  approvedAt       DateTime?       @db.Timestamptz(3)
+  // Set on any explicit review decision; null = never reviewed (fresh suggestion).
+  reviewedAt       DateTime?       @db.Timestamptz(3)
   source           EntitySource    @default(USER)
   createdAt        DateTime        @default(now()) @db.Timestamptz(3)
   updatedAt        DateTime        @updatedAt @db.Timestamptz(3)
@@ -365,6 +392,44 @@ model Prompt {
 
   @@unique([projectId, text, country, language])
   @@index([projectId, isActive])
+}
+
+/// One onboarding website analysis run (crawl + extraction). Append-only:
+/// re-analysis creates a new row so history is preserved.
+model WebsiteAnalysis {
+  id            String                @id @default(cuid())
+  projectId     String
+  status        WebsiteAnalysisStatus @default(RUNNING)
+  // AI = model extraction; DETERMINISTIC = metadata-only fallback (no AI configured or AI failed).
+  method        ExtractionMethod?
+  requestedUrl  String
+  homepageUrl   String?
+  site          String?
+  robotsStatus  String?
+  pagesCrawled  Int                   @default(0)
+  // Per-page summaries (url, title, description, h1, wordCount) — not full page text.
+  pages         Json                  @default("[]")
+  failures      Json                  @default("[]")
+  // Validated extraction output (brand profile) and any AI failure details.
+  extraction    Json?
+  aiProvider    String?
+  aiModel       String?
+  aiAttempts    Int                   @default(0)
+  inputTokens   Int?
+  outputTokens  Int?
+  estimatedCost Decimal               @default(0) @db.Decimal(12, 6)
+  errorCode     String?
+  errorMessage  String?
+  durationMs    Int?
+  createdById   String?
+  createdAt     DateTime              @default(now()) @db.Timestamptz(3)
+  completedAt   DateTime?             @db.Timestamptz(3)
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User?   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([projectId, createdAt])
+  @@index([createdAt])
 }
 
 // ───────────────────────── Providers & scans ─────────────────────────
@@ -440,21 +505,21 @@ model Scan {
 }
 
 model ScanJob {
-  id          String        @id @default(cuid())
-  scanId      String
-  promptId    String
-  providerId  String
-  modelId     String?
-  country     String        @db.VarChar(2)
-  language    String        @db.VarChar(8)
-  status      ScanJobStatus @default(PENDING)
-  attempts    Int           @default(0)
-  errorCode   String?
-  lastError   String?       @db.Text
-  createdAt   DateTime      @default(now()) @db.Timestamptz(3)
-  startedAt   DateTime?     @db.Timestamptz(3)
-  finishedAt  DateTime?     @db.Timestamptz(3)
-  updatedAt   DateTime      @updatedAt @db.Timestamptz(3)
+  id         String        @id @default(cuid())
+  scanId     String
+  promptId   String
+  providerId String
+  modelId    String?
+  country    String        @db.VarChar(2)
+  language   String        @db.VarChar(8)
+  status     ScanJobStatus @default(PENDING)
+  attempts   Int           @default(0)
+  errorCode  String?
+  lastError  String?       @db.Text
+  createdAt  DateTime      @default(now()) @db.Timestamptz(3)
+  startedAt  DateTime?     @db.Timestamptz(3)
+  finishedAt DateTime?     @db.Timestamptz(3)
+  updatedAt  DateTime      @updatedAt @db.Timestamptz(3)
 
   scan     Scan        @relation(fields: [scanId], references: [id], onDelete: Cascade)
   prompt   Prompt      @relation(fields: [promptId], references: [id], onDelete: Cascade)

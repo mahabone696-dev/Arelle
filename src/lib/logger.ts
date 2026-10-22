@@ -8,8 +8,9 @@ export type LogFields = Record<string, unknown>;
 const LEVEL_ORDER: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };
 const REDACTED_KEYS = /pass(word)?|secret|token|api[-_]?key|authorization|cookie/i;
 
-function resolveLevel(): LogLevel {
+function resolveLevel(): LogLevel | "silent" {
   const raw = process.env.LOG_LEVEL?.toLowerCase();
+  if (raw === "silent") return "silent";
   return raw && raw in LEVEL_ORDER ? (raw as LogLevel) : "info";
 }
 
@@ -40,7 +41,7 @@ export interface Logger {
 export function createLogger(bindings: LogFields = {}): Logger {
   const minLevel = resolveLevel();
   const write = (level: LogLevel, msg: string, fields?: LogFields) => {
-    if (LEVEL_ORDER[level] < LEVEL_ORDER[minLevel]) return;
+    if (minLevel === "silent" || LEVEL_ORDER[level] < LEVEL_ORDER[minLevel]) return;
     const line = JSON.stringify({
       ts: new Date().toISOString(),
       level,

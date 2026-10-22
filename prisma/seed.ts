@@ -81,6 +81,8 @@ async function seedDemo() {
       language: "en",
       locale: "en-US",
       timezone: "America/New_York",
+      onboardingStep: "COMPLETED",
+      onboardingCompletedAt: new Date(),
     },
     update: {},
   });
@@ -127,7 +129,7 @@ async function seedDemo() {
   for (const p of prompts) {
     await db.prompt.upsert({
       where: { projectId_text_country_language: { projectId: project.id, text: p.text, country: "US", language: "en" } },
-      create: { projectId: project.id, ...p, country: "US", language: "en", source: "DEMO", reason: "[DEMO DATA]" },
+      create: { projectId: project.id, ...p, country: "US", language: "en", source: "DEMO", reason: "[DEMO DATA]", approvedAt: new Date() },
       update: {},
     });
   }

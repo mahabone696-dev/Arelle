@@ -68,7 +68,7 @@ export const getProjectPage = cache(async (orgSlug: string, projectId: string) =
   const { user, access } = await requireProjectPage(orgSlug, projectId);
   const project = await db.project.findUniqueOrThrow({
     where: { id: access.projectId },
-    select: { id: true, name: true, domain: true, country: true, language: true, locale: true, timezone: true, createdAt: true },
+    select: { id: true, name: true, domain: true, country: true, language: true, locale: true, timezone: true, createdAt: true, onboardingStep: true, onboardingCompletedAt: true },
   });
   return { user, access, project };
 });

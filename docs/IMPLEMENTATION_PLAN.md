@@ -1,6 +1,6 @@
 # AI Search Visibility (GEO) Platform — Implementation Plan
 
-Status: **Phase 1 complete** — Phase 2 next · Last updated: 2026-10-22
+Status: **Phase 2 complete** — Phase 3 next · Last updated: 2026-10-22
 
 This document is the agreed architecture and phased build plan. It is the
 source of truth for structure decisions; update it when a decision changes.
@@ -277,7 +277,9 @@ the `NEXT_PUBLIC_` prefix except `NEXT_PUBLIC_APP_URL`.
 | `PLATFORM_ADMIN_EMAILS` | no | 1 | Comma-separated emails granted admin on sign-up. |
 | `FEATURE_GEMINI`, `FEATURE_PERPLEXITY`, `FEATURE_ACTION_ENGINE`, `FEATURE_BILLING`, `FEATURE_PUBLIC_AUDIT`, `FEATURE_REPORTS` | no | 1 | Default-off flags (`true`/`false`). DB flags override. |
 | `REDIS_URL` | yes (worker) | 3 | Managed Redis (TLS `rediss://` in prod). |
-| `OPENAI_API_KEY`, `OPENAI_MODEL` | Phase 3 | 3 | |
+| `OPENAI_API_KEY` | Phase 2 | 2 | Enables AI brand extraction, competitor and prompt suggestions. Without it onboarding uses a labelled metadata/template fallback. |
+| `OPENAI_ONBOARDING_MODEL` | no | 2 | Structured-output model for onboarding (default `gpt-4.1-mini`). Add its price to `AIModel` for cost tracking. |
+| `OPENAI_MODEL` | Phase 3 | 3 | Answer model for scans. |
 | `GEMINI_API_KEY`, `GEMINI_MODEL` | Phase 7 | 7 | |
 | `PERPLEXITY_API_KEY`, `PERPLEXITY_MODEL` | Phase 7 | 7 | |
 | `SCAN_GLOBAL_DAILY_QUERY_CAP` | no | 3 | Hard ceiling across all orgs (default 5000). |
@@ -299,9 +301,7 @@ authorized centrally). Route handlers exist where an HTTP contract is needed
 | --- | --- | --- |
 | `GET/POST /api/auth/[...nextauth]` | 1 | Auth.js. |
 | `GET /api/health` | 1 | Liveness + DB check. |
-| `POST /api/onboarding/analyze` | 2 | Enqueue/perform crawl + brand extraction for a URL. |
-| `POST /api/onboarding/competitors` | 2 | Suggest competitors. |
-| `POST /api/onboarding/prompts` | 2 | Generate 30 prompts. |
+| Server actions in `src/app/(app)/[orgSlug]/onboarding/actions.ts` | 2 | Start/re-run analysis, save brand, suggest/save competitors, generate/review prompts. Implemented as server actions (no public HTTP API); the logic lives in `src/server/onboarding/service.ts` and can be exposed as route handlers later. |
 | `POST /api/projects/:projectId/scans` | 3 | Create scan (cost estimate, caps, kill switch) → enqueue dispatch. |
 | `GET /api/projects/:projectId/scans/:scanId` | 3 | Scan progress (`completed / expected`). |
 | `GET /api/projects/:projectId/metrics?from&to&provider` | 5 | Dashboard metrics. |
@@ -369,3 +369,21 @@ competitors and prompts, run a scan processed by background workers, see
 mentions/citations/visibility, receive opportunities and recommendations,
 mark actions implemented and see observed before/after change, within
 enforced plan limits and paid subscriptions, with strict organization isolation.
+
+---
+
+## 13. Phase 2 notes (as built)
+
+**Flow:** `/[org]/onboarding` (domain + market) → crawl + extraction → `/onboarding/[project]/brand` (editable profile) → `/competitors` (≈5 AI suggestions; add/edit/remove) → `/prompts` (30 prompts; approve/edit/delete/add) → overview.
+
+**Crawler** (`src/server/crawler`): URL policy on every hop; DNS resolved and validated inside the socket lookup (plus IP-literal check in the connector) so validation and connection can't diverge; blocks loopback/private/link-local/metadata/CGNAT/ULA/reserved and their IPv4-mapped/NAT64/6to4 forms; ≤5 redirects; 2 MB body cap; 10 s request timeout and 60 s crawl budget; no compressed bodies; HTML-only pages; robots.txt per RFC 9309 (5xx → homepage only; crawl-delay honoured, >5 s → homepage only); sitemap without entity expansion; depth 1, ≤12 pages, same site only; language-aware, diversified page selection.
+
+**AI structured output** (`src/server/ai`): Zod schema → strict JSON Schema → OpenAI Responses API (`json_schema`, strict). Every response is re-validated; malformed/truncated output retried with a repair note (≤3 attempts, hard max 5); transient errors back off; fatal errors stop. All failures logged; usage and cost recorded per call (`UsageRecord AI_EXTRACTION`). Website text is passed as delimited untrusted data.
+
+**Prompt generation:** target mix INFORMATIONAL 5 · COMMERCIAL 8 · TRANSACTIONAL 4 · COMPARISON 5 · ALTERNATIVE 4 · BRANDED 4 = 30. A deterministic finalizer enforces market codes, dedupes, rejects unbranded BRANDED prompts, reclassifies brand-naming prompts, and applies quotas; shortfalls get one targeted AI top-up, then English templates (stored `source = TEMPLATE`, labelled in the UI).
+
+**Fallbacks are explicit:** without an AI key (or when AI fails / the daily AI budget is reached) the brand profile is metadata-only (`WebsiteAnalysis.method = DETERMINISTIC`), competitors are not guessed, and prompts come from templates — all labelled. Nothing is presented as AI output when it isn't.
+
+**Limits:** 10 analyses/user/hour, 30/org/day, 120 AI calls/org/day, 30 generations/user/hour (plan-based in Phase 8). Max 10 competitors, 200 prompts per project.
+
+**Migrations:** `onboarding` (WebsiteAnalysis, onboarding step, competitor reason/confidence, prompt approvedAt, `TEMPLATE` source), `backfill_prompt_approval`, `prompt_reviewed_at`, `backfill_prompt_reviewed_at`.

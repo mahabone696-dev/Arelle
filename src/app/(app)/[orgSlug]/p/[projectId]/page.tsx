@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
-import { LineChart } from "lucide-react";
+import Link from "next/link";
+import { ArrowRight, CheckCircle2, LineChart } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { db } from "@/server/db";
 import { PageHeader } from "@/components/page-header";
 import { MetricCard } from "@/components/metric-card";
 import { EmptyState } from "@/components/empty-state";
@@ -17,10 +20,15 @@ export default async function OverviewPage({
   searchParams,
 }: {
   params: Promise<{ orgSlug: string; projectId: string }>;
-  searchParams: Promise<{ range?: string }>;
+  searchParams: Promise<{ range?: string; onboarded?: string }>;
 }) {
-  const [{ orgSlug, projectId }, { range }] = await Promise.all([params, searchParams]);
+  const [{ orgSlug, projectId }, { range, onboarded }] = await Promise.all([params, searchParams]);
   const { project } = await getProjectPage(orgSlug, projectId);
+  // Authorized above via getProjectPage.
+  const [activePrompts, competitors] = await Promise.all([
+    db.prompt.count({ where: { projectId, isActive: true } }),
+    db.competitor.count({ where: { projectId, isActive: true } }),
+  ]);
   const rangeLabel = DATE_RANGES.find((r) => r.key === parseDateRange(range))!.label;
 
   return (
@@ -29,6 +37,33 @@ export default async function OverviewPage({
         title="Overview"
         description={`${project.domain} · ${countryName(project.country)} · ${languageName(project.language)} · ${rangeLabel}`}
       />
+
+      {!project.onboardingCompletedAt ? (
+        <Card className="mb-4 flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center">
+          <div className="flex-1">
+            <div className="text-sm font-medium">Finish setting up {project.name}</div>
+            <div className="text-[13px] text-muted-foreground">Confirm your brand profile, competitors and prompts to start tracking AI visibility.</div>
+          </div>
+          <Button asChild size="sm">
+            <Link href={`/${orgSlug}/onboarding/${projectId}`}>
+              Continue setup <ArrowRight />
+            </Link>
+          </Button>
+        </Card>
+      ) : (
+        <Card className="mb-4 flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center">
+          {onboarded ? <CheckCircle2 className="size-5 shrink-0 text-success" /> : null}
+          <div className="flex-1">
+            <div className="text-sm font-medium">{onboarded ? "Setup complete" : "Ready for your first scan"}</div>
+            <div className="text-[13px] text-muted-foreground">
+              Tracking <span className="tabular font-medium text-foreground">{activePrompts}</span> prompts against <span className="tabular font-medium text-foreground">{competitors}</span> competitors. Scans that query AI engines arrive in the next release.
+            </div>
+          </div>
+          <Button size="sm" disabled title="Available in the next release">
+            Start First Scan
+          </Button>
+        </Card>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-1">
