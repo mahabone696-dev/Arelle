@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/empty-state";
-import { INTENT_LABELS, PROMPT_INTENTS } from "@/server/onboarding/intents";
+import { INTENT_LABELS, PROMPT_INTENTS } from "@/lib/prompt-intents";
 import type { ActionResult } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 

@@ -478,7 +478,12 @@ model Scan {
   projectId          String
   status             ScanStatus @default(QUEUED)
   scanType           ScanType   @default(MANUAL)
+  // Pre-dispatch plan: expectedQueryCount = promptCount × providerCount.
+  promptCount        Int        @default(0)
+  providerCount      Int        @default(0)
   expectedQueryCount Int
+  // Snapshot of providers used/unavailable and limits applied at dispatch time.
+  plan               Json       @default("{}")
   completedCount     Int        @default(0)
   failedCount        Int        @default(0)
   skippedCount       Int        @default(0)
@@ -533,7 +538,7 @@ model ScanJob {
   @@index([providerId, createdAt])
 }
 
-/// Immutable: never update or delete in application code.
+/// Immutable: UPDATE is rejected by a database trigger (see migration scan_pipeline).
 model AIResponse {
   id             String   @id @default(cuid())
   scanId         String

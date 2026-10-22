@@ -7,6 +7,7 @@ export type AppErrorCode =
   | "CONFLICT"
   | "LIMIT_EXCEEDED"
   | "FEATURE_DISABLED"
+  | "UNAVAILABLE"
   | "INTERNAL";
 
 const HTTP_STATUS: Record<AppErrorCode, number> = {
@@ -17,6 +18,7 @@ const HTTP_STATUS: Record<AppErrorCode, number> = {
   CONFLICT: 409,
   LIMIT_EXCEEDED: 429,
   FEATURE_DISABLED: 403,
+  UNAVAILABLE: 503,
   INTERNAL: 500,
 };
 

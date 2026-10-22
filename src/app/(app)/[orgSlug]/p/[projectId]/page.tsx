@@ -10,6 +10,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { getProjectPage } from "@/server/auth/session";
 import { DATE_RANGES, parseDateRange } from "@/lib/date-range";
 import { countryName, languageName } from "@/lib/i18n";
+import { can } from "@/server/auth/policy";
+import { listRecentScans, previewScan } from "@/server/scans/service";
+import { UNAVAILABLE_LABELS } from "@/server/providers/registry";
+import { ScanControl } from "@/components/scans/scan-control";
+import { ScanStatusBadge, formatUsd } from "@/components/scans/scan-status-badge";
+import { runScanAction } from "./scan-actions";
 
 export const metadata: Metadata = { title: "Overview" };
 
@@ -23,12 +29,15 @@ export default async function OverviewPage({
   searchParams: Promise<{ range?: string; onboarded?: string }>;
 }) {
   const [{ orgSlug, projectId }, { range, onboarded }] = await Promise.all([params, searchParams]);
-  const { project } = await getProjectPage(orgSlug, projectId);
+  const { project, user, access } = await getProjectPage(orgSlug, projectId);
   // Authorized above via getProjectPage.
-  const [activePrompts, competitors] = await Promise.all([
+  const [activePrompts, competitors, preview, recentScans] = await Promise.all([
     db.prompt.count({ where: { projectId, isActive: true } }),
     db.competitor.count({ where: { projectId, isActive: true } }),
+    previewScan(user.id, projectId),
+    listRecentScans(user.id, projectId),
   ]);
+  const activeScan = recentScans.find((s) => s.status === "QUEUED" || s.status === "RUNNING");
   const rangeLabel = DATE_RANGES.find((r) => r.key === parseDateRange(range))!.label;
 
   return (
@@ -54,16 +63,53 @@ export default async function OverviewPage({
         <Card className="mb-4 flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center">
           {onboarded ? <CheckCircle2 className="size-5 shrink-0 text-success" /> : null}
           <div className="flex-1">
-            <div className="text-sm font-medium">{onboarded ? "Setup complete" : "Ready for your first scan"}</div>
+            <div className="text-sm font-medium">{onboarded ? "Setup complete" : recentScans.length ? "AI scans" : "Ready for your first scan"}</div>
             <div className="text-[13px] text-muted-foreground">
-              Tracking <span className="tabular font-medium text-foreground">{activePrompts}</span> prompts against <span className="tabular font-medium text-foreground">{competitors}</span> competitors. Scans that query AI engines arrive in the next release.
+              Tracking <span className="tabular font-medium text-foreground">{activePrompts}</span> prompts against <span className="tabular font-medium text-foreground">{competitors}</span> competitors.
             </div>
           </div>
-          <Button size="sm" disabled title="Available in the next release">
-            Start First Scan
-          </Button>
+          <ScanControl
+            orgSlug={orgSlug}
+            projectId={projectId}
+            activeScanId={activeScan?.id ?? null}
+            canRun={can(access.role, "scan:run")}
+            run={runScanAction.bind(null, orgSlug, projectId)}
+            preview={{
+              promptCount: preview.promptCount,
+              providerCount: preview.providerCount,
+              expectedQueryCount: preview.expectedQueryCount,
+              estimatedCost: preview.estimatedCost,
+              providers: preview.providers.map((p) => ({ displayName: p.displayName, model: p.model })),
+              unavailable: preview.unavailable.filter((u) => u.reason !== "DISABLED").map((u) => ({ displayName: u.displayName, label: UNAVAILABLE_LABELS[u.reason] })),
+              blockedReason: preview.blockedReason,
+            }}
+          />
         </Card>
       )}
+
+      {recentScans.length ? (
+        <Card className="mb-4">
+          <CardHeader>
+            <CardTitle>Recent scans</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-2">
+            <ul className="divide-y text-[13px]">
+              {recentScans.map((s) => (
+                <li key={s.id}>
+                  <Link href={`/${orgSlug}/p/${projectId}/scans/${s.id}`} className="flex flex-wrap items-center gap-3 py-2.5 hover:text-foreground">
+                    <ScanStatusBadge status={s.status} />
+                    <span className="tabular">{s.createdAt.toISOString().slice(0, 16).replace("T", " ")} UTC</span>
+                    <span className="tabular text-muted-foreground">
+                      {s.completedCount}/{s.expectedQueryCount} answers{s.failedCount ? ` · ${s.failedCount} failed` : ""}
+                    </span>
+                    <span className="tabular ml-auto text-muted-foreground">{formatUsd(Number(s.actualCost))}</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-1">

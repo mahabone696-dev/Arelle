@@ -14,18 +14,20 @@ import { FEATURE_FLAGS } from "../src/server/flags/definitions";
 
 const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }) });
 
-// List prices in USD per 1M tokens — verify against provider pricing before launch.
+// List prices in USD per 1M tokens; `request` is the per-call web search fee.
+// VERIFY against current provider pricing before launch — cost caps depend on these.
 const PROVIDERS = [
-  { slug: "openai", displayName: "ChatGPT", models: [{ modelId: "gpt-4.1-mini", displayName: "GPT-4.1 mini", input: 0.4, output: 1.6, request: 0, isDefault: true }] },
-  { slug: "gemini", displayName: "Gemini", models: [] },
-  { slug: "perplexity", displayName: "Perplexity", models: [{ modelId: "sonar", displayName: "Sonar", input: 1, output: 1, request: 0.005, isDefault: true }] },
+  { slug: "openai", displayName: "ChatGPT", enabled: true, models: [{ modelId: "gpt-4.1-mini", displayName: "GPT-4.1 mini", input: 0.4, output: 1.6, request: 0.025, isDefault: true }] },
+  { slug: "gemini", displayName: "Gemini", enabled: false, models: [] },
+  { slug: "perplexity", displayName: "Perplexity", enabled: false, models: [{ modelId: "sonar", displayName: "Sonar", input: 1, output: 1, request: 0.005, isDefault: true }] },
 ] as const;
 
 async function seedPlatform() {
   for (const p of PROVIDERS) {
     const provider = await db.aIProvider.upsert({
       where: { slug: p.slug },
-      create: { slug: p.slug, displayName: p.displayName, isEnabled: false },
+      // isEnabled is only set on creation; later changes are an admin decision (pnpm admin provider ...).
+      create: { slug: p.slug, displayName: p.displayName, isEnabled: p.enabled },
       update: { displayName: p.displayName },
     });
     for (const m of p.models) {
@@ -40,7 +42,7 @@ async function seedPlatform() {
           requestCost: m.request,
           isDefault: m.isDefault,
         },
-        update: {},
+        update: { inputCostPer1M: m.input, outputCostPer1M: m.output, requestCost: m.request },
       });
     }
   }

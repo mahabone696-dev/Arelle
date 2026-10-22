@@ -1,6 +1,6 @@
 # AI Search Visibility (GEO) Platform — Implementation Plan
 
-Status: **Phase 2 complete** — Phase 3 next · Last updated: 2026-10-22
+Status: **Phase 3 complete** — Phase 4 next · Last updated: 2026-10-22
 
 This document is the agreed architecture and phased build plan. It is the
 source of truth for structure decisions; update it when a decision changes.
@@ -279,7 +279,11 @@ the `NEXT_PUBLIC_` prefix except `NEXT_PUBLIC_APP_URL`.
 | `REDIS_URL` | yes (worker) | 3 | Managed Redis (TLS `rediss://` in prod). |
 | `OPENAI_API_KEY` | Phase 2 | 2 | Enables AI brand extraction, competitor and prompt suggestions. Without it onboarding uses a labelled metadata/template fallback. |
 | `OPENAI_ONBOARDING_MODEL` | no | 2 | Structured-output model for onboarding (default `gpt-4.1-mini`). Add its price to `AIModel` for cost tracking. |
-| `OPENAI_MODEL` | Phase 3 | 3 | Answer model for scans. |
+| `OPENAI_SCAN_MODEL` | no | 3 | Answer model for scans (default `gpt-4.1-mini`); must have an `AIModel` pricing row. |
+| `OPENAI_SCAN_WEB_SEARCH` | no | 3 | `true` (default) grounds answers with web search and returns citations. |
+| `OPENAI_BASE_URL` | no | 3 | Override API base URL (proxy / test double). |
+| `SCAN_ORG_DAILY_QUERY_CAP` | no | 3 | Extra per-org daily cap; the plan limit also applies (lower wins). |
+| `SCAN_JOB_MAX_ATTEMPTS`, `SCAN_JOB_BACKOFF_MS` | no | 3 | Query retry policy (default 3 attempts, 5 s exponential). |
 | `GEMINI_API_KEY`, `GEMINI_MODEL` | Phase 7 | 7 | |
 | `PERPLEXITY_API_KEY`, `PERPLEXITY_MODEL` | Phase 7 | 7 | |
 | `SCAN_GLOBAL_DAILY_QUERY_CAP` | no | 3 | Hard ceiling across all orgs (default 5000). |
@@ -302,7 +306,7 @@ authorized centrally). Route handlers exist where an HTTP contract is needed
 | `GET/POST /api/auth/[...nextauth]` | 1 | Auth.js. |
 | `GET /api/health` | 1 | Liveness + DB check. |
 | Server actions in `src/app/(app)/[orgSlug]/onboarding/actions.ts` | 2 | Start/re-run analysis, save brand, suggest/save competitors, generate/review prompts. Implemented as server actions (no public HTTP API); the logic lives in `src/server/onboarding/service.ts` and can be exposed as route handlers later. |
-| `POST /api/projects/:projectId/scans` | 3 | Create scan (cost estimate, caps, kill switch) → enqueue dispatch. |
+| Server action `runScanAction` | 3 | Create scan (plan, caps, kill switch) → enqueue dispatch. A public `POST` route can wrap `createScan` later. |
 | `GET /api/projects/:projectId/scans/:scanId` | 3 | Scan progress (`completed / expected`). |
 | `GET /api/projects/:projectId/metrics?from&to&provider` | 5 | Dashboard metrics. |
 | `GET /api/projects/:projectId/prompts/:promptId` | 5 | Prompt detail with per-provider answers. |
@@ -387,3 +391,19 @@ enforced plan limits and paid subscriptions, with strict organization isolation.
 **Limits:** 10 analyses/user/hour, 30/org/day, 120 AI calls/org/day, 30 generations/user/hour (plan-based in Phase 8). Max 10 competitors, 200 prompts per project.
 
 **Migrations:** `onboarding` (WebsiteAnalysis, onboarding step, competitor reason/confidence, prompt approvedAt, `TEMPLATE` source), `backfill_prompt_approval`, `prompt_reviewed_at`, `backfill_prompt_reviewed_at`.
+
+---
+
+## 14. Phase 3 notes (as built)
+
+**Provider abstraction** (`src/server/providers`): `AIAnswerProvider` (`query`, `healthCheck`, `estimateCost`, `capabilities`), typed `ProviderError` (code + `retryable`), registry that reports every unavailable provider with a reason (`DISABLED`, `FEATURE_OFF`, `NOT_CONFIGURED`, `NOT_IMPLEMENTED`, `PRICING_MISSING`). Only `OpenAIProvider` exists: Responses API, prompt sent verbatim (no steering instructions), `web_search` tool with approximate user location = scan country, URL citations extracted in answer order, cost from real token usage + per-search fee.
+
+**Admission** (`src/server/scans/service.ts`), all before anything is queued: kill switch → ready providers → active prompts → plan (`promptCount × providerCount = expectedQueryCount`, conservative cost estimate) → per-scan max → plan tier (prompts per project, manual scans/day) → org/global/provider daily query caps → one active scan per project. Checks + `Scan`/`ScanJob` creation run in one transaction under a Postgres advisory lock. If the queue is down the scan is marked FAILED and its jobs SKIPPED.
+
+**Execution** (`src/server/scans/{dispatch,execute,lifecycle}.ts`, `src/server/queue`, `worker/`): BullMQ queues `scan-dispatch`, `scan-query-<provider>`, `scan-maintenance`. Queue job id = DB id (idempotent). Per-provider queues carry global concurrency and global rate limits (cross-process). Before every paid call: kill switch, scan state, and an atomic Redis quota (global/org/provider per UTC day, Lua INCR with rollback). Retryable errors (429/5xx/timeout/empty) retry with exponential backoff; fatal ones (auth, quota, bad request, content filter) fail fast. Each job reaches one terminal state via a conditional update that also bumps the scan counter; the scan finalizes exactly once as `COMPLETED` / `PARTIAL` / `FAILED` / `CANCELLED`. A sweeper re-dispatches lost `QUEUED` scans and fails jobs of scans running > 6 h.
+
+**Persistence**: `AIResponse` written once per job (unique `scanJobId`; duplicates keep the first) with raw + normalized text, model, latency, tokens, cost, citations in metadata; a DB trigger rejects any `UPDATE`. `UsageRecord PROVIDER_QUERY` per answer with cost; `Scan.actualCost` vs `estimatedCost`.
+
+**Operations**: `pnpm worker:dev` / `worker:build` + `worker:start` (esbuild bundle, deploy separately), `pnpm admin kill-switch on|off|status`, `pnpm admin provider status|enable|disable <slug>`, `pnpm scan:smoke --yes` (real 5-prompt OpenAI scan through the normal admission path).
+
+**Migration**: `scan_pipeline` (Scan.promptCount/providerCount/plan + AIResponse immutability trigger).
