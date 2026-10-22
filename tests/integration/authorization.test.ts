@@ -96,6 +96,18 @@ describe("organizations & projects", () => {
   });
 });
 
+describe("project updates", () => {
+  it("only changes the fields provided (regression: timezone was reset to UTC)", async () => {
+    const u = await user("upd@a.com");
+    const org = await createOrganization(u.id, { name: "Updates" });
+    const p = await createProject(u.id, org.id, { ...projectInput, country: "DE", language: "de", timezone: "Europe/Berlin" });
+    const updated = await updateProject(u.id, p.id, { name: "Renamed" });
+    expect(updated).toMatchObject({ name: "Renamed", timezone: "Europe/Berlin", country: "DE", language: "de", locale: "de-DE" });
+    const moved = await updateProject(u.id, p.id, { country: "AT" });
+    expect(moved).toMatchObject({ country: "AT", language: "de", locale: "de-AT", timezone: "Europe/Berlin" });
+  });
+});
+
 describe("registration", () => {
   it("creates a user with hashed password and a workspace; rejects duplicates", async () => {
     const created = await registerUser({ name: "Jo Doe", email: "JO@Example.com", password: "a-long-password" });

@@ -4,34 +4,20 @@ import GitHub from "next-auth/providers/github";
 import Google from "next-auth/providers/google";
 import type { Provider } from "next-auth/providers";
 import { PrismaAdapter } from "@auth/prisma-adapter";
-import { z } from "zod";
 import { db } from "@/server/db";
 import { ensurePersonalOrganization } from "@/server/organizations/service";
 import { getEnv } from "@/server/env";
-import { logger } from "@/lib/logger";
+import { clientIpFromHeaders } from "@/lib/request";
 import { authConfig } from "./auth.config";
-import { verifyPassword } from "./password";
-
-const credentialsSchema = z.object({
-  email: z.string().trim().toLowerCase().email(),
-  password: z.string().min(1).max(200),
-});
+import { authenticateCredentials } from "./credentials";
 
 function buildProviders(): Provider[] {
   const providers: Provider[] = [
     Credentials({
       credentials: { email: { label: "Email", type: "email" }, password: { label: "Password", type: "password" } },
-      async authorize(raw) {
-        const parsed = credentialsSchema.safeParse(raw);
-        if (!parsed.success) return null;
-        const user = await db.user.findUnique({ where: { email: parsed.data.email } });
-        if (!user?.passwordHash) return null;
-        const valid = await verifyPassword(parsed.data.password, user.passwordHash);
-        if (!valid) {
-          logger.info("auth.sign_in_failed", { reason: "bad_password" });
-          return null;
-        }
-        return { id: user.id, email: user.email, name: user.name, image: user.image };
+      async authorize(raw, request) {
+        const result = await authenticateCredentials(raw, clientIpFromHeaders(request.headers));
+        return result.ok ? result.user : null;
       },
     }),
   ];

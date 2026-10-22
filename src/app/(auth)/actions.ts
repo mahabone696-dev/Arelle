@@ -23,7 +23,6 @@ function safeRedirect(target: FormDataEntryValue | null): string {
 }
 
 export async function signInAction(_prev: ActionResult | null, formData: FormData): Promise<ActionResult> {
-  if (await limited("sign-in", 20)) return { ok: false, error: "Too many attempts. Try again in a few minutes." };
   try {
     await signIn("credentials", {
       email: formData.get("email"),
@@ -32,7 +31,8 @@ export async function signInAction(_prev: ActionResult | null, formData: FormDat
     });
     return { ok: true, data: undefined };
   } catch (error) {
-    if (error instanceof AuthError) return { ok: false, error: "Incorrect email or password.", values: formValues(formData, ["password"]) };
+    // Rate-limited attempts also surface here; the message stays generic on purpose.
+    if (error instanceof AuthError) return { ok: false, error: "Incorrect email or password, or too many attempts.", values: formValues(formData, ["password"]) };
     throw error; // includes the redirect thrown on success
   }
 }

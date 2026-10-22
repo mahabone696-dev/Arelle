@@ -20,7 +20,11 @@ export const authConfig = {
     authorized({ auth, request }) {
       // UX redirect only — real authorization happens server-side per request.
       if (isPublicPath(request.nextUrl.pathname)) return true;
-      return Boolean(auth?.user);
+      if (auth?.user) return true;
+      if (request.nextUrl.pathname.startsWith("/api/")) {
+        return Response.json({ error: "UNAUTHENTICATED" }, { status: 401 });
+      }
+      return false;
     },
     jwt({ token, user }) {
       if (user?.id) token.sub = user.id;
