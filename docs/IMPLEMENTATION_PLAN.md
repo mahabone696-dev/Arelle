@@ -1,0 +1,371 @@
+# AI Search Visibility (GEO) Platform — Implementation Plan
+
+Status: **Phase 1 complete** — Phase 2 next · Last updated: 2026-10-22
+
+This document is the agreed architecture and phased build plan. It is the
+source of truth for structure decisions; update it when a decision changes.
+
+---
+
+## 1. Repository audit (starting point)
+
+| Item | Finding |
+| --- | --- |
+| Application code | None. The repository contained only Claude Code tooling (`.claude/` — a Scrapling skill and a SessionStart hook). |
+| Existing stack | None to preserve. The `.claude/` folder is left untouched. |
+| Problems | No `package.json`, no lockfile, no CI, no `.gitignore`. |
+| Missing dependencies | Everything — installed in Phase 1 (see §6). |
+| Runtime available | Node 22.22, pnpm 10.28, PostgreSQL 16, Redis 7 (local services for dev/test). |
+
+Conclusion: greenfield build on the requested stack. Nothing is overwritten.
+
+---
+
+## 2. Product loop → system modules
+
+```
+DISCOVER   onboarding: crawler → brand extraction → competitors → prompts
+TRACK      scan engine: Scan → ScanJob (prompt × provider) → AIResponse (immutable)
+DIAGNOSE   analysis: mentions, competitor matching, citations, sentiment → VisibilitySnapshot
+RECOMMEND  opportunity engine (deterministic rules) → action engine (Recommendation)
+FIX        action tracking: PLANNED → IMPLEMENTED (date, URL, notes)
+MEASURE    ActionMeasurement: observed before/after visibility (never claims causation)
+REPEAT     scheduled scans per plan tier
+```
+
+---
+
+## 3. Architecture
+
+### 3.1 Principles
+
+* **Layered, framework-light core.** Business logic lives in `src/server/**`
+  and `src/lib/**` as plain TypeScript. It must not import from `next/*`
+  (except thin adapters in `src/server/auth`). This keeps it reusable by the
+  worker process and testable in isolation.
+* **One deployable repo, two processes.**
+  * `web` — Next.js (App Router) on Vercel: UI, route handlers, server actions.
+  * `worker` — a long-running Node process (`worker/index.ts`) consuming
+    BullMQ queues on Redis. Deployed separately (Railway/Fly/Render/ECS).
+    The web process only **enqueues**; it never calls paid AI providers
+    inside a request (except small, capped onboarding calls).
+* **Provider adapters.** All AI engines implement `AIAnswerProvider`
+  (`src/server/providers/types.ts`). Business logic resolves adapters
+  through a registry keyed by provider slug; it never imports
+  `openai`/`@google/genai` directly. A provider that cannot do something
+  returns a typed `ProviderError` with a transparent status — we never
+  substitute another provider's answer.
+* **Immutable history.** `AIResponse`, `BrandMention`, `Citation`, and
+  `VisibilitySnapshot` rows are append-only. Re-analysis creates a new
+  `analysisVersion`, it never mutates the raw response.
+* **International by design.** `country` (ISO-3166-1 alpha-2), `language`
+  (ISO-639-1), `locale` (BCP-47), provider, model, and timestamp are stored
+  on prompts, scan jobs, responses, and snapshots. V1 UI is English only.
+* **Security is server-side.** Every data access goes through central
+  authorization helpers (`src/server/auth/authorization.ts`). Hidden buttons
+  are never a security boundary.
+* **Cost safety first.** Expected query count is computed and stored before a
+  scan is dispatched; org/day caps, provider concurrency limits, and a global
+  kill switch gate every dispatch.
+
+### 3.2 Request / data flow
+
+```
+Browser ──► Next.js (RSC / server actions / route handlers)
+              │  validate (Zod) → authorize (org membership) → service
+              │
+              ├──► PostgreSQL (Prisma, pg driver adapter)
+              └──► Redis/BullMQ  (enqueue only)
+                        │
+                        ▼
+                    Worker process
+                        ├─ scan-dispatch  : Scan → ScanJobs (checks caps, kill switch)
+                        ├─ scan-query     : ScanJob → provider adapter → AIResponse
+                        ├─ scan-analyze   : AIResponse → mentions/citations
+                        ├─ scan-finalize  : Scan status, VisibilitySnapshot, opportunities
+                        └─ crawl          : onboarding website analysis
+```
+
+### 3.3 Progress updates
+
+The scan page polls `GET /api/projects/:id/scans/:scanId` (every 2–3s while
+`QUEUED|RUNNING`), returning `{ completed, failed, expected }` →
+"Scanning 47 / 90 responses". Polling is chosen over SSE/WebSockets because it
+is robust on Vercel serverless; it can be upgraded later behind the same API.
+
+---
+
+## 4. Folder structure
+
+```
+.
+├── docs/
+│   └── IMPLEMENTATION_PLAN.md
+├── prisma/
+│   ├── schema.prisma               # full data model
+│   ├── migrations/                 # committed SQL migrations
+│   └── seed.ts                     # clearly-labelled DEMO org/data only
+├── prisma.config.ts                # Prisma 7 config (schema, migrations, seed)
+├── worker/
+│   └── index.ts                    # BullMQ worker entrypoint (Phase 3)
+├── src/
+│   ├── app/                        # Next.js App Router (UI + HTTP only)
+│   │   ├── (marketing)/            # public pages, /audit (Phase 9)
+│   │   ├── (auth)/                 # sign-in, sign-up
+│   │   ├── (app)/                  # authenticated app shell
+│   │   │   ├── onboarding/         # Phase 2
+│   │   │   ├── orgs/new/
+│   │   │   └── [orgSlug]/
+│   │   │       ├── projects/new/
+│   │   │       └── p/[projectId]/  # overview, prompts, competitors, citations,
+│   │   │                           # opportunities, actions, reports, settings
+│   │   ├── admin/                  # protected admin area (Phase 9)
+│   │   ├── r/[token]/              # read-only shared reports (Phase 9)
+│   │   └── api/
+│   │       ├── auth/[...nextauth]/
+│   │       ├── health/
+│   │       ├── projects/[projectId]/...   # scans, progress (Phase 3+)
+│   │       └── webhooks/stripe/           # Phase 8
+│   ├── components/
+│   │   ├── ui/                     # shadcn/ui primitives
+│   │   ├── layout/                 # sidebar, top bar, selectors
+│   │   └── charts/                 # Recharts wrappers (Phase 5)
+│   ├── lib/                        # framework-agnostic utilities
+│   │   ├── logger.ts               # structured JSON logger
+│   │   ├── monitoring.ts           # error-reporting abstraction (Sentry-ready)
+│   │   ├── errors.ts               # typed application errors
+│   │   ├── domain.ts               # domain/URL normalization
+│   │   ├── i18n.ts                 # country/language/locale catalogues
+│   │   └── utils.ts                # cn(), slugify(), ...
+│   ├── server/                     # business logic (no React)
+│   │   ├── env.ts                  # Zod-validated server env (never sent to client)
+│   │   ├── db.ts                   # Prisma client singleton
+│   │   ├── auth/                   # Auth.js config, password hashing, authorization
+│   │   ├── flags/                  # feature flags
+│   │   ├── system/                 # kill switch / system settings
+│   │   ├── organizations/          # org service + validation
+│   │   ├── projects/               # project service + validation
+│   │   ├── audit-log/              # AuditLog writer
+│   │   ├── crawler/                # Phase 2: safe-fetch, robots, sitemap, extract
+│   │   ├── onboarding/             # Phase 2: brand/competitor/prompt generation
+│   │   ├── providers/              # Phase 3/7: AIAnswerProvider + adapters + registry
+│   │   ├── scans/                  # Phase 3: scan service, cost estimator, caps
+│   │   ├── queue/                  # Phase 3: BullMQ queues + job types
+│   │   ├── analysis/               # Phase 4: mention/citation/sentiment extraction
+│   │   ├── scoring/                # Phase 4: visibility score (configurable weights)
+│   │   ├── opportunities/          # Phase 6: deterministic rule engine
+│   │   ├── recommendations/        # Phase 6: action engine
+│   │   ├── actions/                # Phase 6: tracking + measurements
+│   │   ├── billing/                # Phase 8: plans, Stripe, usage enforcement
+│   │   └── reports/                # Phase 9
+│   └── proxy.ts                    # Next 16 request proxy (auth redirect only)
+├── tests/
+│   ├── unit/                       # pure business-logic tests (vitest)
+│   └── integration/                # DB-backed tests (separate config)
+├── .env.example
+└── package.json
+```
+
+---
+
+## 5. Prisma schema plan
+
+All IDs are `cuid()` strings. All timestamps are `timestamptz`. Soft-delete is
+avoided for analytic history (rows are immutable); configuration entities use
+`isActive` / `archivedAt`.
+
+### 5.1 Identity & tenancy
+| Model | Purpose / key fields |
+| --- | --- |
+| `User` | Auth.js user + `passwordHash?`, `isPlatformAdmin`. |
+| `Account`, `Session`, `VerificationToken` | Auth.js adapter tables. |
+| `Organization` | `name`, `slug` (unique), `isDemo` (demo data isolation), `planTier`. |
+| `OrganizationMember` | `(organizationId, userId)` unique, `role: OWNER/ADMIN/MEMBER/VIEWER`. |
+
+### 5.2 Projects & entities
+| Model | Key fields |
+| --- | --- |
+| `Project` | `organizationId`, `name`, `domain`, `country`, `language`, `locale`, `timezone`, `archivedAt`. Unique `(organizationId, domain)`. |
+| `Brand` | 1:1 with project — `name`, `domain`, `description`, `industry`, `aliases[]`, `products Json`, `targetCustomers[]`, `markets[]`, `topics[]`. |
+| `Competitor` | `projectId`, `name`, `domain`, `aliases[]`, `isActive`, `source: USER/AI_SUGGESTED`. |
+| `PromptCluster` | `projectId`, `name`. |
+| `Prompt` | `projectId`, `text`, `intent`, `category`, `clusterId`, `country`, `language`, `priority (1–5)`, `opportunityScore`, `reason`, `isActive`, `source`. |
+
+Enums: `PromptIntent = INFORMATIONAL|COMMERCIAL|TRANSACTIONAL|COMPARISON|ALTERNATIVE|BRANDED`;
+`PromptCategory = CATEGORY|COMMERCIAL|COMPARISON|ALTERNATIVE|PROBLEM|PURCHASE_INTENT|BRANDED`.
+
+### 5.3 Providers & scanning
+| Model | Key fields |
+| --- | --- |
+| `AIProvider` | `slug` (openai/gemini/perplexity), `displayName`, `isEnabled`, `maxConcurrency`, `requestsPerMinute`, `dailyQueryCap`. |
+| `AIModel` | `providerId`, `modelId`, `inputCostPer1M`, `outputCostPer1M`, `isDefault`, `isActive`. |
+| `Scan` | `projectId`, `status: QUEUED/RUNNING/COMPLETED/PARTIAL/FAILED/CANCELLED`, `scanType: MANUAL/SCHEDULED/ONBOARDING/AUDIT`, `expectedQueryCount`, `completedCount`, `failedCount`, `estimatedCost`, `actualCost`, `triggeredById`, `startedAt`, `completedAt`, `isDemo`. |
+| `ScanJob` | `scanId`, `promptId`, `providerId`, `modelId`, `country`, `language`, `status: PENDING/RUNNING/SUCCEEDED/FAILED/SKIPPED`, `attempts`, `lastError`, `errorCode`. Unique `(scanId, promptId, providerId)` — idempotency guard against loops. |
+| `AIResponse` | **Immutable**. `scanId`, `scanJobId` (unique), `promptId`, `providerId`, `model`, `country`, `language`, `promptText` (snapshot), `rawText`, `normalizedText`, `latencyMs`, `inputTokens`, `outputTokens`, `estimatedCost`, `metadata Json`, `isDemo`, `createdAt`. No `updatedAt`. |
+
+### 5.4 Analysis
+| Model | Key fields |
+| --- | --- |
+| `BrandMention` | `responseId`, `analysisVersion`, `competitorId?`, `brandName`, `brandDomain`, `mentionType: PRIMARY/COMPETITOR/OTHER`, `position`, `sentiment (-1..1)`, `recommendationStrength`, `confidence`, `isPrimaryBrand`, `extractionMethod: DETERMINISTIC/AI`. |
+| `Citation` | `responseId`, `analysisVersion`, `url`, `normalizedUrl`, `domain`, `title`, `position`. |
+| `VisibilitySnapshot` | `projectId`, `scanId`, `providerId?` (null = all providers), `competitorId?` (null = primary brand), `country`, `language`, `date`, `visibilityScore`, `mentionRate`, `shareOfVoice`, `averagePosition`, `citationRate`, `sentimentScore`, `sampleSize`, `weightsVersion`. |
+
+### 5.5 Recommend / fix / measure
+| Model | Key fields |
+| --- | --- |
+| `Opportunity` | `projectId`, `promptId?`, `scanId`, `type: LOST_PROMPT/COMPETITOR_DOMINANCE/CITATION_GAP/POSITION_GAP/CONTENT_GAP`, `title`, `description`, `evidence Json`, `impactScore`, `confidenceScore`, `status: OPEN/DISMISSED/RESOLVED`, `fingerprint` (dedupe across scans). |
+| `Recommendation` | `opportunityId`, `type` (CREATE_CONTENT … INTERNAL_LINKING), `title`, `reason` (WHY), `suggestedAction` (HOW), `targetUrl` (WHERE), `estimatedImpact: LOW/MEDIUM/HIGH`, `status: OPEN/PLANNED/IMPLEMENTED/DISMISSED`. |
+| `Action` | `recommendationId`, `status: PLANNED/IMPLEMENTED/ABANDONED`, `plannedAt`, `implementedAt`, `implementationUrl`, `notes`, `baselineScore`, `createdById`. |
+| `ActionMeasurement` | `actionId`, `scanId`, `measuredAt`, `daysSinceImplementation`, `beforeScore`, `afterScore`, `delta` (labelled "observed change"). |
+
+### 5.6 Billing, usage, platform
+| Model | Key fields |
+| --- | --- |
+| `Subscription` | `organizationId` (unique), `planTier: FREE/STARTER/GROWTH/AGENCY`, `status`, `stripeCustomerId`, `stripeSubscriptionId`, `currentPeriodEnd`, `cancelAtPeriodEnd`. |
+| `UsageRecord` | `organizationId`, `metric: PROVIDER_QUERY/SCAN/PROMPT/PROJECT/CRAWL_PAGE/AUDIT`, `quantity`, `costUsd`, `periodKey` (YYYY-MM-DD), `referenceId`. Append-only ledger. |
+| `AuditLog` | `organizationId?`, `actorId?`, `action`, `entityType`, `entityId`, `metadata Json`, `ip`, `createdAt`. |
+| `SystemSetting` | key/value — `scan.killSwitch`, global daily cap. Read on every dispatch. |
+| `FeatureFlag` | `key`, `isEnabled`, optional per-org overrides (`FeatureFlagOverride`). |
+| `ReportShare` | `projectId`, `token` (hashed), `expiresAt`, `revokedAt`, `brandingJson` (white-label ready). |
+| `PublicAudit` | `domain`, `ipHash`, `status`, `resultJson`, `createdAt` (rate-limit + acquisition funnel). |
+
+### 5.7 Migrations
+1. `0001_init` (Phase 1) — the full schema above, so foreign keys and enums are
+   stable from day one. Later phases add columns/indexes via new migrations
+   only; existing migrations are never edited after merge.
+2. Production: `prisma migrate deploy` in the release step (never `migrate dev`).
+
+---
+
+## 6. Dependencies
+
+| Area | Package | Phase |
+| --- | --- | --- |
+| Web | `next@16`, `react@19`, `react-dom@19` | 1 |
+| Styling | `tailwindcss@4`, `@tailwindcss/postcss`, `clsx`, `tailwind-merge`, `class-variance-authority` | 1 |
+| UI | shadcn/ui pattern on `@radix-ui/*`, `lucide-react` | 1 |
+| DB | `prisma@7`, `@prisma/client@7`, `@prisma/adapter-pg`, `pg` | 1 |
+| Auth | `next-auth@5 (Auth.js)`, `@auth/prisma-adapter` | 1 |
+| Validation | `zod@4` | 1 |
+| Tests | `vitest`, `vite-tsconfig-paths` | 1 |
+| Tooling | `typescript`, `eslint@9` + `eslint-config-next`, `prettier`, `tsx`, `dotenv` | 1 |
+| Crawler | `cheerio` (HTML parsing), `fast-xml-parser` (sitemaps), `robots-parser`, `ipaddr.js` (SSRF checks) | 2 |
+| Jobs | `bullmq`, `ioredis` | 3 |
+| AI | `openai` | 3 |
+| AI | `@google/genai` (Gemini); Perplexity via its OpenAI-compatible HTTP API | 7 |
+| Charts | `recharts` | 5 |
+| Billing | `stripe` | 8 |
+
+Passwords are hashed with Node's built-in `crypto.scrypt` (no native deps).
+
+---
+
+## 7. Environment variables
+
+See `.env.example` for the authoritative list. All are **server-only**; none use
+the `NEXT_PUBLIC_` prefix except `NEXT_PUBLIC_APP_URL`.
+
+| Variable | Required | Phase | Notes |
+| --- | --- | --- | --- |
+| `DATABASE_URL` | yes | 1 | PostgreSQL connection string (pooled in prod). |
+| `AUTH_SECRET` | yes | 1 | Auth.js signing secret (`openssl rand -base64 32`). |
+| `AUTH_URL` | prod | 1 | Canonical app URL for Auth.js. |
+| `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` | optional | 1 | Enables Google sign-in when present. |
+| `AUTH_GITHUB_ID` / `AUTH_GITHUB_SECRET` | optional | 1 | Enables GitHub sign-in when present. |
+| `NEXT_PUBLIC_APP_URL` | yes | 1 | Public base URL (links, report shares). |
+| `LOG_LEVEL` | no | 1 | `debug|info|warn|error` (default `info`). |
+| `PLATFORM_ADMIN_EMAILS` | no | 1 | Comma-separated emails granted admin on sign-up. |
+| `FEATURE_GEMINI`, `FEATURE_PERPLEXITY`, `FEATURE_ACTION_ENGINE`, `FEATURE_BILLING`, `FEATURE_PUBLIC_AUDIT`, `FEATURE_REPORTS` | no | 1 | Default-off flags (`true`/`false`). DB flags override. |
+| `REDIS_URL` | yes (worker) | 3 | Managed Redis (TLS `rediss://` in prod). |
+| `OPENAI_API_KEY`, `OPENAI_MODEL` | Phase 3 | 3 | |
+| `GEMINI_API_KEY`, `GEMINI_MODEL` | Phase 7 | 7 | |
+| `PERPLEXITY_API_KEY`, `PERPLEXITY_MODEL` | Phase 7 | 7 | |
+| `SCAN_GLOBAL_DAILY_QUERY_CAP` | no | 3 | Hard ceiling across all orgs (default 5000). |
+| `SCAN_MAX_QUERIES_PER_SCAN` | no | 3 | Hard ceiling per scan (default 1000). |
+| `CRAWLER_MAX_PAGES`, `CRAWLER_MAX_BYTES`, `CRAWLER_TIMEOUT_MS` | no | 2 | Crawler safety limits. |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_STARTER`, `STRIPE_PRICE_GROWTH`, `STRIPE_PRICE_AGENCY` | Phase 8 | 8 | |
+| `AUDIT_IP_SALT` | Phase 9 | 9 | Hashing IPs for public audit rate limits. |
+| `SENTRY_DSN` | no | any | Picked up by `src/lib/monitoring.ts` when an adapter is added. |
+
+---
+
+## 8. API route plan
+
+Mutations from the app UI use **server actions** (validated with Zod and
+authorized centrally). Route handlers exist where an HTTP contract is needed
+(polling, webhooks, worker health, future public API).
+
+| Method & path | Phase | Purpose |
+| --- | --- | --- |
+| `GET/POST /api/auth/[...nextauth]` | 1 | Auth.js. |
+| `GET /api/health` | 1 | Liveness + DB check. |
+| `POST /api/onboarding/analyze` | 2 | Enqueue/perform crawl + brand extraction for a URL. |
+| `POST /api/onboarding/competitors` | 2 | Suggest competitors. |
+| `POST /api/onboarding/prompts` | 2 | Generate 30 prompts. |
+| `POST /api/projects/:projectId/scans` | 3 | Create scan (cost estimate, caps, kill switch) → enqueue dispatch. |
+| `GET /api/projects/:projectId/scans/:scanId` | 3 | Scan progress (`completed / expected`). |
+| `GET /api/projects/:projectId/metrics?from&to&provider` | 5 | Dashboard metrics. |
+| `GET /api/projects/:projectId/prompts/:promptId` | 5 | Prompt detail with per-provider answers. |
+| `POST /api/projects/:projectId/recommendations/:id/actions` | 6 | Mark planned / implemented. |
+| `POST /api/billing/checkout`, `POST /api/billing/portal` | 8 | Stripe Checkout / Billing Portal. |
+| `POST /api/webhooks/stripe` | 8 | Signature-verified Stripe webhook. |
+| `POST /api/audit` | 9 | Public free audit (rate-limited, captcha-ready). |
+| `GET /r/:token` | 9 | Read-only shared report. |
+| `POST /api/admin/kill-switch` | 9 | Platform admin only. |
+
+---
+
+## 9. Background worker plan (Phase 3+)
+
+Queues (BullMQ on Redis), each with its own concurrency:
+
+| Queue | Job | Concurrency | Retries |
+| --- | --- | --- | --- |
+| `scan-dispatch` | Expand a `Scan` into `ScanJob`s, re-check caps & kill switch, enqueue queries. | 2 | 3, exp. backoff |
+| `scan-query:<provider>` | One prompt × provider. Calls the adapter, stores `AIResponse`, records `UsageRecord` + cost. | `AIProvider.maxConcurrency` + BullMQ `limiter` from `requestsPerMinute` | 3, exp. backoff (2s, 4s, 8s); non-retryable errors (auth, unsupported) fail fast |
+| `scan-analyze` | Parse an `AIResponse` → mentions/citations. | 8 | 3 |
+| `scan-finalize` | When `completed + failed == expected`: set `COMPLETED`/`PARTIAL`/`FAILED`, compute snapshots, run opportunity engine, action measurements. | 2 | 5 |
+| `crawl` | Onboarding website crawl (if moved off-request). | 4 | 2 |
+
+Cost-safety guards (checked at **dispatch and at each query**):
+1. Global kill switch (`SystemSetting scan.killSwitch`) → jobs are `SKIPPED`.
+2. Per-scan ceiling `SCAN_MAX_QUERIES_PER_SCAN`; scan refused if exceeded.
+3. Plan limits (prompts, scans per period) and per-org daily query cap.
+4. Per-provider daily cap and global daily cap from `UsageRecord`.
+5. `ScanJob` unique `(scanId, promptId, providerId)` + BullMQ `jobId = scanJob.id`
+   → re-enqueuing is idempotent; a loop cannot multiply paid calls.
+6. A failed job never fails the scan; finalize decides `PARTIAL` vs `FAILED`.
+
+---
+
+## 10. Visibility score (Phase 4)
+
+`src/server/scoring/visibility.ts` — pure function, configurable weights,
+default `{ mention: .35, position: .25, shareOfVoice: .20, citation: .10, sentiment: .10 }`
+→ 0–100. Position score `= 1 / position` normalized; sentiment mapped from
+[-1,1] to [0,1]. Weights are versioned (`weightsVersion`) so historical
+snapshots remain explainable.
+
+---
+
+## 11. Phases
+
+| # | Scope | Exit criteria |
+| --- | --- | --- |
+| **1** | Repo setup, auth, full DB schema + migration, organizations, projects, dashboard shell, logging, env validation, feature flags, kill-switch setting, authorization helpers. | lint, typecheck, unit tests, integration tests, build all pass. |
+| 2 | Onboarding: safe crawler (SSRF-protected), brand extraction (AI → Zod), competitors, 30 prompts, editable review UI. | Onboarding works end-to-end on a real site. |
+| 3 | Provider interface + OpenAI adapter, scan queue, workers, response persistence, cost estimation and caps. | Real 5-prompt scan, DB verified. |
+| 4 | Response parsing (mentions, competitors, citations, sentiment), visibility scoring. | Tests + manual calc verification. |
+| 5 | Overview, Prompts, Prompt detail, Competitors, Citations pages (Recharts). | Verified with real + demo data. |
+| 6 | Opportunity engine, Action engine, action tracking & measurements. | ≥10 realistic recommendation tests. |
+| 7 | Gemini + Perplexity adapters (provider-specific behaviour documented). | Verified per provider. |
+| 8 | Stripe, subscriptions, server-side usage limits, billing portal. | Stripe test mode verified. |
+| 9 | Public `/audit`, reports + share links, admin area, polish. | Definition of Done (§12). |
+
+## 12. Definition of Done (V1)
+
+See product brief §32 — a real user can sign up, onboard a website, review
+competitors and prompts, run a scan processed by background workers, see
+mentions/citations/visibility, receive opportunities and recommendations,
+mark actions implemented and see observed before/after change, within
+enforced plan limits and paid subscriptions, with strict organization isolation.
