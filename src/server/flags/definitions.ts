@@ -6,6 +6,7 @@ export const FEATURE_FLAGS = {
   billing: { env: "FEATURE_BILLING", description: "Stripe billing" },
   publicAudit: { env: "FEATURE_PUBLIC_AUDIT", description: "Public /audit funnel" },
   reports: { env: "FEATURE_REPORTS", description: "Shareable reports" },
+  analysisAi: { env: "FEATURE_ANALYSIS_AI", description: "AI sentiment for languages without a deterministic lexicon" },
 } as const;
 
 export type FeatureFlagKey = keyof typeof FEATURE_FLAGS;

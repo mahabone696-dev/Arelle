@@ -1,6 +1,6 @@
 # AI Search Visibility (GEO) Platform — Implementation Plan
 
-Status: **Phase 3 complete** — Phase 4 next · Last updated: 2026-10-22
+Status: **Phase 4 complete** — Phase 5 next · Last updated: 2026-10-22
 
 This document is the agreed architecture and phased build plan. It is the
 source of truth for structure decisions; update it when a decision changes.
@@ -407,3 +407,29 @@ enforced plan limits and paid subscriptions, with strict organization isolation.
 **Operations**: `pnpm worker:dev` / `worker:build` + `worker:start` (esbuild bundle, deploy separately), `pnpm admin kill-switch on|off|status`, `pnpm admin provider status|enable|disable <slug>`, `pnpm scan:smoke --yes` (real 5-prompt OpenAI scan through the normal admission path).
 
 **Migration**: `scan_pipeline` (Scan.promptCount/providerCount/plan + AIResponse immutability trigger).
+
+---
+
+## 15. Phase 4 notes (as built)
+
+**Analysis** (`src/server/analysis`), run by the worker after a scan finalizes (`scan-analyze` queue; sweeper re-enqueues lost jobs; `pnpm admin analyze <scanId>` re-runs):
+- *Brand matching* — name, name without legal suffix, aliases, domain; whole-word, Unicode-aware, possessives. Names that are ordinary words (Close, Monday, Notion…) match case-sensitively; at a prose sentence start they get confidence 0.4 and don't count (kept as `lowConfidence`). List-item/line starts count.
+- *Position* — rank by first appearance among tracked brands (primary + competitors) in the answer.
+- *Sentiment* — English lexicon on the clause(s) mentioning the brand (split on but/while/however/…; pronoun-led clauses attach to the preceding brand), negation within 3 tokens, damped ratio `(pos − neg)/(pos + neg + 1)`. Other languages: null, or AI-scored when `FEATURE_ANALYSIS_AI` is on (Zod-validated; AI never adds brands).
+- *Recommendation strength* — `0.5·(1/rank) + 0.3·phrasing + 0.2·sentiment01`.
+- *Citations* — provider annotations first, then markdown/bare links; tracking params, fragments, `www`, trailing slashes removed; grouped by registrable domain (Public Suffix List via `tldts`); classified PRIMARY / COMPETITOR / THIRD_PARTY.
+- Output validated by `analysisResultSchema`; stored as `ResponseAnalysis` (+ `BrandMention`, `Citation`) per `analysisVersion`.
+
+**Visibility score** (`src/server/scoring/visibility.ts`):
+`100 × (0.35·mentionRate + 0.25·positionScore + 0.20·shareOfVoice + 0.10·citationRate + 0.10·sentiment01)`, with
+`positionScore = mean(1 / (1 + 0.5·(rank − 1)))` over mentioning answers, `shareOfVoice = brand mentions / tracked-brand mentions`,
+`sentiment01 = (mean sentiment + 1)/2` (0.5 if mentioned but unscored, 0 if never mentioned). Weights via `VISIBILITY_WEIGHTS`; every snapshot stores `weightsVersion` (e.g. `w1:35-25-20-10-10`).
+
+Worked example (unit test): 10 answers, mentioned in 6 at ranks 1,1,2,3,1,5, cited in 3, 25 tracked mentions, sentiments 0.5, 0.8, 0, —, 0.2, −0.5 →
+mention 0.6 · position 0.75 · SoV 0.24 · citation 0.3 · sentiment 0.6 → 100 × (0.21 + 0.1875 + 0.048 + 0.03 + 0.06) = **53.6**.
+
+**Snapshots** (`src/server/scoring/snapshots.ts`): per scan × market (country/language) × {all engines, each engine} × {primary, each active competitor}; written once per scan under a lock.
+
+**History integrity**: `ResponseAnalysis`, `BrandMention`, `Citation`, `VisibilitySnapshot` reject UPDATE (trigger). Their FKs cascade only with project/organization deletion; competitors with history are deactivated, never deleted; providers/models referenced by answers are `RESTRICT`.
+
+**Migrations**: `response_analysis`, `history_fk_actions`.

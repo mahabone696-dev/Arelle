@@ -109,6 +109,19 @@ enum ExtractionMethod {
   AI
 }
 
+enum CitationOwner {
+  PRIMARY
+  COMPETITOR
+  THIRD_PARTY
+}
+
+enum ScanAnalysisStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
 enum OpportunityType {
   LOST_PROMPT
   COMPETITOR_DOMINANCE
@@ -344,6 +357,7 @@ model Competitor {
 
   project             Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
   mentions            BrandMention[]
+  citations           Citation[]
   visibilitySnapshots VisibilitySnapshot[]
 
   @@unique([projectId, name])
@@ -474,28 +488,32 @@ model AIModel {
 }
 
 model Scan {
-  id                 String     @id @default(cuid())
-  projectId          String
-  status             ScanStatus @default(QUEUED)
-  scanType           ScanType   @default(MANUAL)
+  id                  String              @id @default(cuid())
+  projectId           String
+  status              ScanStatus          @default(QUEUED)
+  scanType            ScanType            @default(MANUAL)
   // Pre-dispatch plan: expectedQueryCount = promptCount × providerCount.
-  promptCount        Int        @default(0)
-  providerCount      Int        @default(0)
-  expectedQueryCount Int
+  promptCount         Int                 @default(0)
+  providerCount       Int                 @default(0)
+  expectedQueryCount  Int
   // Snapshot of providers used/unavailable and limits applied at dispatch time.
-  plan               Json       @default("{}")
-  completedCount     Int        @default(0)
-  failedCount        Int        @default(0)
-  skippedCount       Int        @default(0)
-  estimatedCost      Decimal    @default(0) @db.Decimal(12, 6)
-  actualCost         Decimal    @default(0) @db.Decimal(12, 6)
-  errorSummary       String?    @db.Text
-  triggeredById      String?
-  isDemo             Boolean    @default(false)
-  createdAt          DateTime   @default(now()) @db.Timestamptz(3)
-  startedAt          DateTime?  @db.Timestamptz(3)
-  completedAt        DateTime?  @db.Timestamptz(3)
-  updatedAt          DateTime   @updatedAt @db.Timestamptz(3)
+  plan                Json                @default("{}")
+  completedCount      Int                 @default(0)
+  failedCount         Int                 @default(0)
+  skippedCount        Int                 @default(0)
+  estimatedCost       Decimal             @default(0) @db.Decimal(12, 6)
+  actualCost          Decimal             @default(0) @db.Decimal(12, 6)
+  errorSummary        String?             @db.Text
+  // Response analysis + visibility snapshots, run after the scan finalizes.
+  analysisStatus      ScanAnalysisStatus?
+  analysisError       String?             @db.Text
+  analysisCompletedAt DateTime?           @db.Timestamptz(3)
+  triggeredById       String?
+  isDemo              Boolean             @default(false)
+  createdAt           DateTime            @default(now()) @db.Timestamptz(3)
+  startedAt           DateTime?           @db.Timestamptz(3)
+  completedAt         DateTime?           @db.Timestamptz(3)
+  updatedAt           DateTime            @updatedAt @db.Timestamptz(3)
 
   project             Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
   triggeredBy         User?                @relation("ScanTriggeredBy", fields: [triggeredById], references: [id], onDelete: SetNull)
@@ -562,13 +580,14 @@ model AIResponse {
   isDemo         Boolean  @default(false)
   createdAt      DateTime @default(now()) @db.Timestamptz(3)
 
-  scan      Scan           @relation(fields: [scanId], references: [id], onDelete: Cascade)
-  scanJob   ScanJob        @relation(fields: [scanJobId], references: [id], onDelete: Cascade)
-  prompt    Prompt         @relation(fields: [promptId], references: [id], onDelete: Cascade)
-  provider  AIProvider     @relation(fields: [providerId], references: [id])
-  aiModel   AIModel?       @relation(fields: [modelId], references: [id])
+  scan      Scan               @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  scanJob   ScanJob            @relation(fields: [scanJobId], references: [id], onDelete: Cascade)
+  prompt    Prompt             @relation(fields: [promptId], references: [id], onDelete: Cascade)
+  provider  AIProvider         @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  aiModel   AIModel?           @relation(fields: [modelId], references: [id], onDelete: Restrict)
   mentions  BrandMention[]
   citations Citation[]
+  analyses  ResponseAnalysis[]
 
   @@index([promptId, createdAt])
   @@index([scanId])
@@ -576,6 +595,31 @@ model AIResponse {
 }
 
 // ───────────────────────────── Analysis ─────────────────────────────
+// Analysis rows are append-only (UPDATE rejected by trigger). Re-analysis
+// writes a new analysisVersion instead of changing history.
+
+/// One analysis of one AI answer. Exists even when nothing was mentioned,
+/// so "analyzed, no mentions" is distinguishable from "not analyzed".
+model ResponseAnalysis {
+  id                     String           @id @default(cuid())
+  responseId             String
+  analysisVersion        Int
+  method                 ExtractionMethod
+  primaryMentioned       Boolean
+  primaryPosition        Int?
+  primarySentiment       Float?
+  recommendationStrength Float?
+  primaryCited           Boolean
+  brandsMentionedCount   Int
+  citationCount          Int
+  // Full validated AnalysisResult (Zod) for audit/debugging.
+  result                 Json
+  createdAt              DateTime         @default(now()) @db.Timestamptz(3)
+
+  response AIResponse @relation(fields: [responseId], references: [id], onDelete: Cascade)
+
+  @@unique([responseId, analysisVersion])
+}
 
 model BrandMention {
   id                     String           @id @default(cuid())
@@ -594,27 +638,33 @@ model BrandMention {
   confidence             Float
   isPrimaryBrand         Boolean
   extractionMethod       ExtractionMethod @default(DETERMINISTIC)
+  occurrences            Int              @default(1)
+  // First sentence mentioning the brand (shown as evidence in the UI).
+  snippet                String?          @db.Text
   createdAt              DateTime         @default(now()) @db.Timestamptz(3)
 
   response   AIResponse  @relation(fields: [responseId], references: [id], onDelete: Cascade)
-  competitor Competitor? @relation(fields: [competitorId], references: [id], onDelete: SetNull)
+  competitor Competitor? @relation(fields: [competitorId], references: [id], onDelete: Cascade)
 
   @@index([responseId, analysisVersion])
   @@index([competitorId])
 }
 
 model Citation {
-  id              String   @id @default(cuid())
+  id              String        @id @default(cuid())
   responseId      String
-  analysisVersion Int      @default(1)
-  url             String   @db.Text
-  normalizedUrl   String   @db.Text
+  analysisVersion Int           @default(1)
+  url             String        @db.Text
+  normalizedUrl   String        @db.Text
   domain          String
   title           String?
   position        Int
-  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+  ownerType       CitationOwner @default(THIRD_PARTY)
+  competitorId    String?
+  createdAt       DateTime      @default(now()) @db.Timestamptz(3)
 
-  response AIResponse @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  response   AIResponse  @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  competitor Competitor? @relation(fields: [competitorId], references: [id], onDelete: Cascade)
 
   @@index([responseId, analysisVersion])
   @@index([domain])
@@ -643,8 +693,8 @@ model VisibilitySnapshot {
   createdAt       DateTime @default(now()) @db.Timestamptz(3)
 
   project    Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  scan       Scan?       @relation(fields: [scanId], references: [id], onDelete: SetNull)
-  provider   AIProvider? @relation(fields: [providerId], references: [id])
+  scan       Scan?       @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  provider   AIProvider? @relation(fields: [providerId], references: [id], onDelete: Restrict)
   competitor Competitor? @relation(fields: [competitorId], references: [id], onDelete: Cascade)
 
   @@index([projectId, date])

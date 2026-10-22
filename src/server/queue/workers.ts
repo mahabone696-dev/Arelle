@@ -8,13 +8,14 @@ import type { Redis } from "ioredis";
 import { db } from "@/server/db";
 import { dispatchScan, sweepScans, type DispatchDeps, defaultDispatchDeps } from "@/server/scans/dispatch";
 import { defaultExecuteDeps, executeScanJob, type ExecuteDeps } from "@/server/scans/execute";
-import { closeJob, finalizeScanIfDone } from "@/server/scans/lifecycle";
+import { closeJob, finalizeScanIfDone, setScanFinalizedHook } from "@/server/scans/lifecycle";
+import { analyzeScan, defaultAnalysisDeps, type AnalysisDeps } from "@/server/analysis/service";
 import { redisQuotaGuard } from "@/server/scans/quota";
 import { scanConfigFromEnv } from "@/server/scans/config";
 import { IMPLEMENTED_PROVIDERS } from "@/server/providers/registry";
 import { logger } from "@/lib/logger";
 import { captureException } from "@/lib/monitoring";
-import { applyProviderQueueLimits, getQueue, QUEUE_NAMES, type DispatchJobData, type QueryJobData } from "./queues";
+import { applyProviderQueueLimits, enqueueScanAnalysis, getQueue, QUEUE_NAMES, type AnalyzeJobData, type DispatchJobData, type QueryJobData } from "./queues";
 import { createRedis } from "./connection";
 
 const log = logger.child({ component: "worker" });
@@ -24,6 +25,7 @@ export interface WorkerOptions {
   providers?: string[];
   executeDeps?: ExecuteDeps;
   dispatchDeps?: DispatchDeps;
+  analysisDeps?: AnalysisDeps;
   /** Sweep interval; 0 disables the scheduler (tests). */
   sweepEveryMs?: number;
 }
@@ -89,6 +91,15 @@ export async function startScanWorkers(options: WorkerOptions = {}): Promise<Run
     log.info("worker.provider_started", { provider: row.slug, concurrency: row.maxConcurrency, requestsPerMinute: row.requestsPerMinute });
   }
 
+  const analysisDeps = options.analysisDeps ?? defaultAnalysisDeps();
+  workers.push(new Worker<AnalyzeJobData>(QUEUE_NAMES.analyze, async (job) => analyzeScan(job.data.scanId, analysisDeps), { connection: conn(), concurrency: 2 }));
+  setScanFinalizedHook(async (scanId, status) => {
+    if (status !== "FAILED") {
+      await db.scan.updateMany({ where: { id: scanId, analysisStatus: null, completedCount: { gt: 0 } }, data: { analysisStatus: "PENDING" } });
+      await enqueueScanAnalysis(scanId);
+    }
+  });
+
   const maintenance = new Worker(QUEUE_NAMES.maintenance, async () => sweepScans({ staleScanMs: cfg.staleScanMs, stuckQueuedMs: cfg.stuckQueuedMs }, dispatchDeps), { connection: conn(), concurrency: 1 });
   workers.push(maintenance);
   const sweepEvery = options.sweepEveryMs ?? 5 * 60_000;
@@ -103,6 +114,7 @@ export async function startScanWorkers(options: WorkerOptions = {}): Promise<Run
 
   return {
     async close() {
+      setScanFinalizedHook(null);
       await Promise.all(workers.map((w) => w.close()));
       await Promise.all(connections.map((c) => c.quit().catch(() => {})));
     },

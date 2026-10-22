@@ -10,6 +10,7 @@ import { scanConfigFromEnv } from "@/server/scans/config";
 export const QUEUE_NAMES = {
   dispatch: "scan-dispatch",
   maintenance: "scan-maintenance",
+  analyze: "scan-analyze",
   /** One queue per provider so each has its own concurrency and rate limit. */
   query: (providerSlug: string) => `scan-query-${providerSlug}`,
 } as const;
@@ -44,6 +45,14 @@ export function queryJobOptions(scanJobId: string): JobsOptions {
 
 export async function enqueueScanDispatch(scanId: string): Promise<void> {
   await getQueue(QUEUE_NAMES.dispatch).add("dispatch", { scanId } satisfies DispatchJobData, { jobId: `dispatch-${scanId}`, attempts: 5, backoff: { type: "exponential", delay: 2_000 } });
+}
+
+export interface AnalyzeJobData {
+  scanId: string;
+}
+
+export async function enqueueScanAnalysis(scanId: string): Promise<void> {
+  await getQueue(QUEUE_NAMES.analyze).add("analyze", { scanId } satisfies AnalyzeJobData, { jobId: `analyze-${scanId}`, attempts: 3, backoff: { type: "exponential", delay: 10_000 } });
 }
 
 export async function enqueueScanQueries(providerSlug: string, scanJobIds: string[]): Promise<void> {

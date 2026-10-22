@@ -5,11 +5,13 @@
  *   pnpm admin kill-switch status
  *   pnpm admin provider status
  *   pnpm admin provider enable openai | disable openai
+ *   pnpm admin analyze <scanId>                # (re)run response analysis + snapshots for a scan
  */
 import "dotenv/config";
 import { db } from "@/server/db";
 import { getScanKillSwitch, setScanKillSwitch } from "@/server/system/settings";
 import { getProviderAvailability, UNAVAILABLE_LABELS } from "@/server/providers/registry";
+import { analyzeScan } from "@/server/analysis/service";
 
 const [area, action, arg] = process.argv.slice(2);
 const actor = process.env.USER ? `cli:${process.env.USER}` : "cli";
@@ -32,7 +34,16 @@ async function main() {
     for (const p of a.unavailable) console.log(`UNAVAILABLE  ${p.slug.padEnd(11)} ${UNAVAILABLE_LABELS[p.reason]} (${p.reason})`);
     return;
   }
-  throw new Error("usage: admin kill-switch|provider ...");
+  if (area === "analyze") {
+    if (!action) throw new Error("usage: analyze <scanId>");
+    // Re-running is safe: answers already analyzed at the current version are skipped.
+    await db.scan.update({ where: { id: action }, data: { analysisStatus: null } });
+    console.log("analysis:", await analyzeScan(action));
+    const snaps = await db.visibilitySnapshot.findMany({ where: { scanId: action, competitorId: null }, include: { provider: { select: { slug: true } } } });
+    for (const s of snaps) console.log(`  ${s.provider?.slug ?? "all"} ${s.country}/${s.language}: score ${s.visibilityScore} · mention ${s.mentionRate} · SoV ${s.shareOfVoice} · avg pos ${s.averagePosition ?? "—"} · cited ${s.citationRate} · n=${s.sampleSize}`);
+    return;
+  }
+  throw new Error("usage: admin kill-switch|provider|analyze ...");
 }
 
 main()

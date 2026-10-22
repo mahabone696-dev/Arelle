@@ -10,6 +10,14 @@ import { logger } from "@/lib/logger";
 import type { ScanStatus } from "@/generated/prisma/enums";
 
 const log = logger.child({ component: "scans.lifecycle" });
+
+type FinalizedHook = (scanId: string, status: ScanStatus) => Promise<void>;
+let onFinalized: FinalizedHook | null = null;
+
+/** Registered by the worker: runs after a scan reaches a terminal state (e.g. enqueue analysis). */
+export function setScanFinalizedHook(hook: FinalizedHook | null): void {
+  onFinalized = hook;
+}
 const OPEN = ["PENDING", "RUNNING"] as const;
 
 type Terminal = "FAILED" | "SKIPPED";
@@ -65,7 +73,10 @@ export async function finalizeScanIfDone(scanId: string, options: { cancelled?: 
 
   log.info("scan.finalized", { scanId, status, completed: scan.completedCount, failed: scan.failedCount, skipped: scan.skippedCount });
   await writeAuditLog({ organizationId: scan.project.organizationId, action: `scan.${status.toLowerCase()}`, entityType: "Scan", entityId: scanId, metadata: { completed: scan.completedCount, failed: scan.failedCount, skipped: scan.skippedCount } });
-  // Phase 4 hooks in here: response analysis → visibility snapshots → opportunities.
+  if (onFinalized) {
+    // A failing hook must not undo finalization; the sweeper re-triggers analysis if needed.
+    await onFinalized(scanId, status).catch((error) => log.error("scan.finalized_hook_failed", { scanId, error }));
+  }
   return status;
 }
 

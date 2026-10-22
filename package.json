@@ -55,6 +55,7 @@
     "robots-parser": "^3.0.1",
     "server-only": "^0.0.1",
     "tailwind-merge": "^3.7.0",
+    "tldts": "^7.4.19",
     "undici": "^8.12.3",
     "zod": "^4.6.7"
   },

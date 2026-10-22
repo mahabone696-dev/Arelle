@@ -22,6 +22,7 @@ import { captureException } from "@/lib/monitoring";
 import { rateLimit } from "@/lib/rate-limit";
 import { scanConfigFromEnv, utcDayKey, utcDayStart, type ScanConfig } from "./config";
 import { computeScanPlan, type ScanPlan } from "./plan";
+import { ANALYSIS_VERSION } from "@/server/analysis/analyze";
 
 const SCAN_ADMISSION_LOCK = 7_301_001;
 const log = logger.child({ component: "scans" });
@@ -220,11 +221,33 @@ export async function getScanDetail(userId: string, projectId: string, scanId: s
       finishedAt: true,
       prompt: { select: { text: true } },
       provider: { select: { slug: true, displayName: true } },
-      response: { select: { id: true, model: true, latencyMs: true, inputTokens: true, outputTokens: true, estimatedCost: true, normalizedText: true, metadata: true, createdAt: true } },
+      response: {
+        select: {
+          id: true,
+          model: true,
+          latencyMs: true,
+          inputTokens: true,
+          outputTokens: true,
+          estimatedCost: true,
+          normalizedText: true,
+          metadata: true,
+          createdAt: true,
+          mentions: { where: { analysisVersion: ANALYSIS_VERSION }, select: { brandName: true, position: true, sentiment: true, recommendationStrength: true, isPrimaryBrand: true, confidence: true }, orderBy: { position: "asc" } },
+          citations: { where: { analysisVersion: ANALYSIS_VERSION }, select: { url: true, domain: true, title: true, position: true, ownerType: true }, orderBy: { position: "asc" } },
+        },
+      },
     },
     orderBy: [{ createdAt: "asc" }, { id: "asc" }],
   });
-  return { scan: progress, jobs };
+  const [snapshots, analysis] = await Promise.all([
+    db.visibilitySnapshot.findMany({
+      where: { scanId },
+      select: { providerId: true, competitorId: true, country: true, language: true, visibilityScore: true, mentionRate: true, shareOfVoice: true, averagePosition: true, citationRate: true, sentimentScore: true, sampleSize: true, provider: { select: { displayName: true } }, competitor: { select: { name: true } } },
+      orderBy: [{ visibilityScore: "desc" }],
+    }),
+    db.scan.findUniqueOrThrow({ where: { id: scanId }, select: { analysisStatus: true, analysisError: true, analysisCompletedAt: true } }),
+  ]);
+  return { scan: progress, jobs, snapshots, analysis };
 }
 
 export async function listRecentScans(userId: string, projectId: string, take = 5) {

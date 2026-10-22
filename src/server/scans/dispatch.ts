@@ -5,7 +5,7 @@
  */
 import { db } from "@/server/db";
 import { getScanKillSwitch } from "@/server/system/settings";
-import { enqueueScanQueries } from "@/server/queue/queues";
+import { enqueueScanAnalysis, enqueueScanQueries } from "@/server/queue/queues";
 import { logger } from "@/lib/logger";
 import { closeOpenJobs, finalizeScanIfDone } from "./lifecycle";
 
@@ -13,10 +13,11 @@ const log = logger.child({ component: "scans.dispatch" });
 
 export interface DispatchDeps {
   enqueueQueries: (providerSlug: string, scanJobIds: string[]) => Promise<void>;
+  enqueueAnalysis: (scanId: string) => Promise<void>;
   isKillSwitchOn: () => Promise<boolean>;
 }
 
-export const defaultDispatchDeps = (): DispatchDeps => ({ enqueueQueries: enqueueScanQueries, isKillSwitchOn: async () => (await getScanKillSwitch()).enabled });
+export const defaultDispatchDeps = (): DispatchDeps => ({ enqueueQueries: enqueueScanQueries, enqueueAnalysis: enqueueScanAnalysis, isKillSwitchOn: async () => (await getScanKillSwitch()).enabled });
 
 export async function dispatchScan(scanId: string, deps: DispatchDeps = defaultDispatchDeps()): Promise<"DISPATCHED" | "CANCELLED" | "NOOP"> {
   const scan = await db.scan.findUnique({ where: { id: scanId }, select: { status: true } });
@@ -60,5 +61,19 @@ export async function sweepScans(options: { staleScanMs: number; stuckQueuedMs: 
 
   const running = await db.scan.findMany({ where: { status: "RUNNING" }, select: { id: true } });
   for (const s of running) await finalizeScanIfDone(s.id);
-  return { redispatched: stuck.length, staleFailed: stale.length };
+
+  // Finished scans whose analysis never started (lost job) or stalled. FAILED analyses are left
+  // for an operator (pnpm admin analyze <scanId>) so a deterministic bug can't loop paid AI calls.
+  const unanalyzed = await db.scan.findMany({
+    where: {
+      status: { in: ["COMPLETED", "PARTIAL", "CANCELLED"] },
+      completedCount: { gt: 0 },
+      completedAt: { lt: new Date(now - 5 * 60_000) },
+      OR: [{ analysisStatus: null }, { analysisStatus: "PENDING" }, { analysisStatus: "RUNNING", updatedAt: { lt: new Date(now - 30 * 60_000) } }],
+    },
+    select: { id: true },
+    take: 100,
+  });
+  for (const s of unanalyzed) await deps.enqueueAnalysis(s.id);
+  return { redispatched: stuck.length, staleFailed: stale.length, analysisRequeued: unanalyzed.length };
 }

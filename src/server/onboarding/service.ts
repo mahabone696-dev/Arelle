@@ -225,7 +225,7 @@ export async function suggestCompetitors(userId: string, projectId: string, deps
   await assertCanGenerate(userId);
 
   if (options.replace) {
-    await db.competitor.deleteMany({ where: { projectId, source: "AI_SUGGESTED", mentions: { none: {} } } });
+    await db.competitor.deleteMany({ where: { projectId, source: "AI_SUGGESTED", mentions: { none: {} }, citations: { none: {} }, visibilitySnapshots: { none: {} } } });
   }
   const project = await db.project.findUniqueOrThrow({ where: { id: projectId }, select: { country: true, language: true } });
   try {
@@ -269,7 +269,11 @@ export async function saveCompetitors(userId: string, projectId: string, input: 
 
 async function saveCompetitorSet(projectId: string, step: OnboardingStep, normalized: Array<{ id?: string; name: string; domain: string | null }>) {
   await db.$transaction(async (tx) => {
-    const current = await tx.competitor.findMany({ where: { projectId }, select: { id: true, name: true, _count: { select: { mentions: true } } } });
+    const current = await tx.competitor.findMany({
+      where: { projectId },
+      select: { id: true, name: true, _count: { select: { mentions: true, citations: true, visibilitySnapshots: true } } },
+    });
+    const hasHistory = (c: (typeof current)[number]) => c._count.mentions + c._count.citations + c._count.visibilitySnapshots > 0;
     const byId = new Map(current.map((c) => [c.id, c]));
     const byName = new Map(current.map((c) => [c.name.toLowerCase(), c]));
     const keep = new Set<string>();
@@ -286,9 +290,9 @@ async function saveCompetitorSet(projectId: string, step: OnboardingStep, normal
       }
     }
     const removed = current.filter((c) => !keep.has(c.id));
-    // Competitors with recorded mentions are deactivated to preserve history; others are deleted.
-    await tx.competitor.updateMany({ where: { id: { in: removed.filter((c) => c._count.mentions > 0).map((c) => c.id) } }, data: { isActive: false } });
-    await tx.competitor.deleteMany({ where: { id: { in: removed.filter((c) => c._count.mentions === 0).map((c) => c.id) } } });
+    // Competitors with analysis history are deactivated (history is append-only); others are deleted.
+    await tx.competitor.updateMany({ where: { id: { in: removed.filter(hasHistory).map((c) => c.id) } }, data: { isActive: false } });
+    await tx.competitor.deleteMany({ where: { id: { in: removed.filter((c) => !hasHistory(c)).map((c) => c.id) } } });
     await tx.project.update({ where: { id: projectId }, data: { onboardingStep: laterStep(step, "PROMPTS") } });
   });
 }
