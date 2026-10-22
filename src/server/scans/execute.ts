@@ -93,11 +93,13 @@ export async function executeScanJob(scanJobId: string, attempt: number, maxAtte
 
   try {
     const result = await provider.adapter.query({ prompt: job.prompt.text, country: job.country, language: job.language, projectId: job.scan.projectId, promptId: job.promptId });
-    const responseId = await persistResponse(job, provider, result, organizationId);
+    // The answer is paid for: retry persistence locally rather than re-querying the provider.
+    const responseId = await withPersistRetry(() => persistResponse(job, provider, result, organizationId), scanJobId);
     await finalizeScanIfDone(scanId);
     log.info("scan_job.succeeded", { scanJobId, provider: provider.slug, latencyMs: result.latencyMs, costUsd: result.estimatedCost, citations: result.citations.length });
     return { kind: "SUCCEEDED", responseId };
   } catch (error) {
+    if (error instanceof PersistError) return fail(job.id, scanId, "PERSIST_FAILED", error.message);
     const pe = isProviderError(error) ? error : new ProviderError(provider.slug, "UNKNOWN", "Unexpected error while querying the provider");
     if (!isProviderError(error)) captureException(error, { component: "scans.execute", scanJobId });
     log.warn("scan_job.provider_error", { scanJobId, provider: provider.slug, code: pe.code, retryable: pe.retryable, attempt, maxAttempts, status: pe.details.status });
@@ -106,6 +108,31 @@ export async function executeScanJob(scanJobId: string, attempt: number, maxAtte
       return { kind: "RETRY", code: pe.code, retryAfterMs: pe.details.retryAfterMs };
     }
     return fail(job.id, scanId, pe.code, pe.message);
+  }
+}
+
+const PERSIST_ATTEMPTS = 4;
+
+export async function withPersistRetry<T>(fn: () => Promise<T>, scanJobId: string, sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (attempt >= PERSIST_ATTEMPTS) {
+        captureException(error, { component: "scans.persist", scanJobId, attempts: attempt });
+        throw new PersistError();
+      }
+      log.warn("scan_job.persist_retry", { scanJobId, attempt });
+      await sleep(250 * 2 ** (attempt - 1));
+    }
+  }
+}
+
+/** Storing a paid answer failed repeatedly; surfaces as a non-retryable job failure (no re-query). */
+export class PersistError extends Error {
+  constructor() {
+    super("Failed to store the provider answer");
+    this.name = "PersistError";
   }
 }
 

@@ -49,7 +49,10 @@ export async function startScanWorkers(options: WorkerOptions = {}): Promise<Run
   workers.push(dispatchWorker);
 
   const slugs = options.providers ?? IMPLEMENTED_PROVIDERS;
-  const providerRows = await db.aIProvider.findMany({ where: { slug: { in: slugs } }, select: { slug: true, maxConcurrency: true, requestsPerMinute: true } });
+  const dbRows = await db.aIProvider.findMany({ where: { slug: { in: slugs } }, select: { slug: true, maxConcurrency: true, requestsPerMinute: true } });
+  // Start a consumer for every implemented provider, even if its row doesn't exist yet (e.g. worker
+  // booted before db:seed); conservative defaults apply until the next restart picks up DB limits.
+  const providerRows = slugs.map((slug) => dbRows.find((r) => r.slug === slug) ?? { slug, maxConcurrency: 2, requestsPerMinute: 30 });
   for (const row of providerRows) {
     // Global (cross-process) limits live on the queue; the local concurrency just bounds this process.
     await applyProviderQueueLimits(row.slug, row);

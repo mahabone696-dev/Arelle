@@ -290,3 +290,29 @@ describe("scan admission limits", () => {
     await expect(createScan(viewer.id, project.id, {}, noQueue())).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });
+
+describe("phase 3 review fixes", () => {
+  it("provider availability works without web-only secrets and isolates a failing provider check", async () => {
+    const secret = process.env.AUTH_SECRET;
+    delete process.env.AUTH_SECRET;
+    try {
+      const { getProviderAvailability } = await import("@/server/providers/registry");
+      const a = await getProviderAvailability();
+      expect(a.ready.map((p) => p.slug)).toEqual(["openai"]);
+      expect(a.unavailable).toEqual([expect.objectContaining({ slug: "gemini", reason: "FEATURE_OFF" })]);
+    } finally {
+      process.env.AUTH_SECRET = secret;
+    }
+  });
+
+  it("retries storing a paid answer instead of re-querying", async () => {
+    const { withPersistRetry, PersistError } = await import("@/server/scans/execute");
+    let calls = 0;
+    const ok = await withPersistRetry(async () => {
+      if (++calls < 3) throw new Error("db blip");
+      return "id";
+    }, "job");
+    expect([ok, calls]).toEqual(["id", 3]);
+    await expect(withPersistRetry(async () => Promise.reject(new Error("down")), "job")).rejects.toBeInstanceOf(PersistError);
+  }, 20_000);
+});

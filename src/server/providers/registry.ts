@@ -7,10 +7,17 @@
  */
 import { db } from "@/server/db";
 import { isFeatureEnabled } from "@/server/flags/flags";
+import { logger } from "@/lib/logger";
 import { OpenAIProvider } from "./openai";
 import type { AIAnswerProvider } from "./types";
 
-export type UnavailableReason = "DISABLED" | "FEATURE_OFF" | "NOT_CONFIGURED" | "NOT_IMPLEMENTED" | "PRICING_MISSING";
+export type UnavailableReason =
+  | "DISABLED"
+  | "FEATURE_OFF"
+  | "NOT_CONFIGURED"
+  | "NOT_IMPLEMENTED"
+  | "PRICING_MISSING"
+  | "CHECK_FAILED";
 
 export interface ProviderConfig {
   /** AIProvider row */
@@ -63,59 +70,94 @@ const FACTORIES: Record<string, Factory> = {
 /** Providers that have an adapter in this build (workers start one queue consumer per slug). */
 export const IMPLEMENTED_PROVIDERS = Object.keys(FACTORIES);
 
-const FEATURE_GATED: Record<string, "gemini" | "perplexity"> = { gemini: "gemini", perplexity: "perplexity" };
+const FEATURE_GATED: Record<string, "gemini" | "perplexity"> = {
+  gemini: "gemini",
+  perplexity: "perplexity",
+};
 
-export async function getProviderAvailability(env: NodeJS.ProcessEnv = process.env): Promise<ProviderAvailability> {
-  const rows = await db.aIProvider.findMany({ include: { models: { where: { isActive: true } } }, orderBy: { createdAt: "asc" } });
+export async function getProviderAvailability(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<ProviderAvailability> {
+  const rows = await loadProviderRows();
   const result: ProviderAvailability = { ready: [], unavailable: [] };
   for (const row of rows) {
-    const miss = (reason: UnavailableReason) => result.unavailable.push({ slug: row.slug, displayName: row.displayName, reason });
-    if (!row.isEnabled) {
-      miss("DISABLED");
-      continue;
+    const miss = (reason: UnavailableReason) =>
+      result.unavailable.push({ slug: row.slug, displayName: row.displayName, reason });
+    try {
+      await evaluateProvider(row, env, result, miss);
+    } catch (error) {
+      // One provider's misconfiguration must never take the others down.
+      logger.error("providers.availability_check_failed", { provider: row.slug, error });
+      miss("CHECK_FAILED");
     }
-    if (FEATURE_GATED[row.slug] && !(await isFeatureEnabled(FEATURE_GATED[row.slug]!))) {
-      miss("FEATURE_OFF");
-      continue;
-    }
-    const factory = FACTORIES[row.slug];
-    if (!factory) {
-      miss("NOT_IMPLEMENTED");
-      continue;
-    }
-    const modelId = configuredModel(row.slug, env);
-    if (!modelId) {
-      miss("NOT_CONFIGURED");
-      continue;
-    }
-    const model = row.models.find((m) => m.modelId === modelId);
-    if (!model) {
-      miss("PRICING_MISSING");
-      continue;
-    }
-    const pricing = { inputCostPer1M: Number(model.inputCostPer1M), outputCostPer1M: Number(model.outputCostPer1M), requestCost: Number(model.requestCost) };
-    const adapter = factory(modelId, pricing, env);
-    if (!adapter) {
-      miss("NOT_CONFIGURED");
-      continue;
-    }
-    result.ready.push({
-      adapter,
-      providerId: row.id,
-      slug: row.slug,
-      displayName: row.displayName,
-      maxConcurrency: row.maxConcurrency,
-      requestsPerMinute: row.requestsPerMinute,
-      dailyQueryCap: row.dailyQueryCap,
-      modelRowId: model.id,
-      modelId,
-    });
   }
   return result;
 }
 
+type ProviderRow = Awaited<ReturnType<typeof loadProviderRows>>[number];
+const loadProviderRows = () =>
+  db.aIProvider.findMany({
+    include: { models: { where: { isActive: true } } },
+    orderBy: { createdAt: "asc" },
+  });
+
+async function evaluateProvider(
+  row: ProviderRow,
+  env: NodeJS.ProcessEnv,
+  result: ProviderAvailability,
+  miss: (r: UnavailableReason) => void,
+): Promise<void> {
+  if (!row.isEnabled) {
+    miss("DISABLED");
+    return;
+  }
+  if (FEATURE_GATED[row.slug] && !(await isFeatureEnabled(FEATURE_GATED[row.slug]!))) {
+    miss("FEATURE_OFF");
+    return;
+  }
+  const factory = FACTORIES[row.slug];
+  if (!factory) {
+    miss("NOT_IMPLEMENTED");
+    return;
+  }
+  const modelId = configuredModel(row.slug, env);
+  if (!modelId) {
+    miss("NOT_CONFIGURED");
+    return;
+  }
+  const model = row.models.find((m) => m.modelId === modelId);
+  if (!model) {
+    miss("PRICING_MISSING");
+    return;
+  }
+  const pricing = {
+    inputCostPer1M: Number(model.inputCostPer1M),
+    outputCostPer1M: Number(model.outputCostPer1M),
+    requestCost: Number(model.requestCost),
+  };
+  const adapter = factory(modelId, pricing, env);
+  if (!adapter) {
+    miss("NOT_CONFIGURED");
+    return;
+  }
+  result.ready.push({
+    adapter,
+    providerId: row.id,
+    slug: row.slug,
+    displayName: row.displayName,
+    maxConcurrency: row.maxConcurrency,
+    requestsPerMinute: row.requestsPerMinute,
+    dailyQueryCap: row.dailyQueryCap,
+    modelRowId: model.id,
+    modelId,
+  });
+}
+
 /** Resolve one ready provider by id (used by workers). Null when it is no longer available. */
-export async function getReadyProvider(providerId: string, env: NodeJS.ProcessEnv = process.env): Promise<ReadyProvider | null> {
+export async function getReadyProvider(
+  providerId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<ReadyProvider | null> {
   const { ready } = await getProviderAvailability(env);
   return ready.find((p) => p.providerId === providerId) ?? null;
 }
@@ -126,4 +168,5 @@ export const UNAVAILABLE_LABELS: Record<UnavailableReason, string> = {
   NOT_CONFIGURED: "Credentials not configured",
   NOT_IMPLEMENTED: "Coming soon",
   PRICING_MISSING: "Model pricing not configured",
+  CHECK_FAILED: "Configuration error",
 };
