@@ -110,7 +110,7 @@ export default async function PromptsPage({
       ) : (
         <Card className="overflow-x-auto">
           <table className="w-full min-w-[760px] text-[13px]">
-            <thead className="border-b text-left text-xs text-muted-foreground">
+            <thead className="whitespace-nowrap border-b text-left text-xs text-muted-foreground">
               <tr>
                 <th className="px-4 py-2.5 font-medium">Prompt</th>
                 <th className="px-3 py-2.5 font-medium">Intent</th>

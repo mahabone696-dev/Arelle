@@ -69,7 +69,7 @@ export default async function CompetitorsPage({ params, searchParams }: { params
 
           <Card className="overflow-x-auto">
             <table className="w-full min-w-[640px] text-[13px]">
-              <thead className="border-b text-left text-xs text-muted-foreground">
+              <thead className="whitespace-nowrap border-b text-left text-xs text-muted-foreground">
                 <tr>
                   <th className="px-4 py-2.5 font-medium">Brand</th>
                   <th className="px-3 py-2.5 text-right font-medium">Visibility</th>
@@ -83,7 +83,7 @@ export default async function CompetitorsPage({ params, searchParams }: { params
               <tbody className="divide-y">
                 {ranked.map((r) => (
                   <tr key={r.id ?? "primary"} className={r.isPrimary ? "bg-accent/50 font-medium" : undefined}>
-                    <td className="px-4 py-2.5">{r.isPrimary ? `${r.name} (you)` : r.name}</td>
+                    <td className="whitespace-nowrap px-4 py-2.5">{r.isPrimary ? `${r.name} (you)` : r.name}</td>
                     <td className="tabular px-3 py-2.5 text-right">{num1(r.metrics.visibilityScore)}</td>
                     <td className="px-3 py-2.5 text-right">
                       <Delta value={r.delta} />

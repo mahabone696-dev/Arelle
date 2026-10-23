@@ -57,11 +57,12 @@ export function ProjectShell({
             </Link>
             <ProjectSwitcher orgSlug={orgSlug} projects={projects} currentId={projectId} />
             {isDemo ? (
-              <span className="rounded border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide">
-                Demo data
+              <span className="shrink-0 whitespace-nowrap rounded border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide">
+                <span className="sm:hidden">Demo</span>
+                <span className="hidden sm:inline">Demo data</span>
               </span>
             ) : null}
-            <div className="ml-auto flex items-center gap-2">
+            <div className="ml-auto flex shrink-0 items-center gap-2">
               <Suspense>
                 <DateRangePicker />
               </Suspense>

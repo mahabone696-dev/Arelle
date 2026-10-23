@@ -51,12 +51,7 @@ export default async function PromptDetailPage({
         <h1 className="mt-1 text-xl font-semibold tracking-tight text-balance">“{d.prompt.text}”</h1>
         <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <Badge variant="outline">{INTENT_LABELS[d.prompt.intent].label}</Badge>
-          <span>P{d.prompt.priority}</span>
-          {d.prompt.cluster ? <span>· {d.prompt.cluster.name}</span> : null}
-          <span>
-            · {countryName(d.prompt.country)} · {languageName(d.prompt.language)}
-          </span>
-          <span>· {rangeLabel}</span>
+          <span>{[`P${d.prompt.priority}`, d.prompt.cluster?.name, countryName(d.prompt.country), languageName(d.prompt.language), rangeLabel].filter(Boolean).join(" · ")}</span>
         </div>
       </div>
 
@@ -79,8 +74,9 @@ export default async function PromptDetailPage({
                 </p>
                 <dl className="grid grid-cols-2 gap-y-1.5 text-[13px]">
                   <dt className="text-muted-foreground">Visibility</dt>
-                  <dd className="tabular text-right font-semibold">
-                    {num1(d.primary?.visibilityScore)} <Delta value={d.primary?.deltas?.visibilityScore} />
+                  <dd className="flex items-baseline justify-end gap-2 whitespace-nowrap">
+                    <Delta value={d.primary?.deltas?.visibilityScore} />
+                    <span className="tabular font-semibold">{num1(d.primary?.visibilityScore)}</span>
                   </dd>
                   <dt className="text-muted-foreground">Mention rate</dt>
                   <dd className="tabular text-right">{pct(d.primary?.mentionRate)}</dd>

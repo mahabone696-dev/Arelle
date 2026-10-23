@@ -137,7 +137,7 @@ export default async function OverviewPage({
                         <tr>
                           <th className="py-1 pr-3 font-medium">Date</th>
                           {trendSeries.map((s) => (
-                            <th key={s.key} className="py-1 pr-3 text-right font-medium">
+                            <th key={s.key} className="whitespace-nowrap py-1 pr-3 text-right font-medium">
                               {s.name}
                             </th>
                           ))}
@@ -146,7 +146,7 @@ export default async function OverviewPage({
                       <tbody className="tabular">
                         {o.series.map((pt) => (
                           <tr key={pt.date} className="border-t">
-                            <td className="py-1 pr-3">{pt.date}</td>
+                            <td className="whitespace-nowrap py-1 pr-3">{pt.date}</td>
                             {trendSeries.map((s) => (
                               <td key={s.key} className="py-1 pr-3 text-right">
                                 {num1(pt.scores[s.key])}
@@ -164,88 +164,88 @@ export default async function OverviewPage({
             )}
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>AI engine performance</CardTitle>
-            <CardDescription>Your visibility score by engine.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ul className="divide-y">
-              {o.engines.map((e) => (
-                <li key={e.providerId} className="flex items-center justify-between gap-3 py-2.5 text-sm">
-                  <span>{e.name}</span>
-                  {e.score !== null ? (
-                    <span className="flex items-baseline gap-2">
-                      <Delta value={e.delta} />
-                      <span className="tabular w-10 text-right font-semibold">{num1(e.score)}</span>
-                    </span>
-                  ) : (
-                    <span className="text-right text-xs text-muted-foreground">{e.note}</span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="mt-4 grid gap-4 lg:grid-cols-5">
-        <Card className="min-w-0 lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Prompts you&apos;re losing</CardTitle>
-            <CardDescription>You&apos;re absent from the latest answers while competitors appear.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {o.losing.length ? (
-              <ul className="divide-y text-[13px]">
-                {o.losing.map((l) => (
-                  <li key={l.promptId}>
-                    <Link href={`${base}/prompts/${l.promptId}${q}`} className="grid gap-0.5 py-2.5 hover:text-foreground">
-                      <span className="font-medium">{l.prompt.text}</span>
-                      <span className="text-xs text-muted-foreground">
-                        Priority P{l.prompt.priority}
-                        {l.competitor ? ` · ${l.competitor} leads` : ""}
+        <div className="flex min-w-0 flex-col gap-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>AI engine performance</CardTitle>
+              <CardDescription>Your visibility score by engine.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ul className="divide-y">
+                {o.engines.map((e) => (
+                  <li key={e.providerId} className="flex items-center justify-between gap-3 py-2.5 text-sm">
+                    <span>{e.name}</span>
+                    {e.score !== null ? (
+                      <span className="flex items-baseline gap-2">
+                        <Delta value={e.delta} />
+                        <span className="tabular w-10 text-right font-semibold">{num1(e.score)}</span>
                       </span>
-                    </Link>
+                    ) : (
+                      <span className="text-right text-xs text-muted-foreground">{e.note}</span>
+                    )}
                   </li>
                 ))}
               </ul>
-            ) : (
-              <p className="text-[13px] text-muted-foreground">{p ? "None — you appear in every prompt's latest answers, or no competitor does." : "No results yet."}</p>
-            )}
-          </CardContent>
-        </Card>
-        <Card className="min-w-0 lg:col-span-3">
-          <CardHeader>
-            <CardTitle>Competitor performance</CardTitle>
-            <CardDescription>Same answers, scored for each brand.</CardDescription>
-          </CardHeader>
-          <CardContent className="overflow-x-auto pt-2">
-            <table className="w-full text-[13px]">
-              <thead className="text-left text-xs text-muted-foreground">
-                <tr>
-                  <th className="py-2 pr-3 font-medium">Brand</th>
-                  <th className="py-2 pr-3 text-right font-medium">Visibility</th>
-                  <th className="py-2 pr-3 text-right font-medium">Mentions</th>
-                  <th className="py-2 pr-3 text-right font-medium">SoV</th>
-                  <th className="py-2 text-right font-medium">Avg. pos.</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {o.competitorTable.map((r) => (
-                  <tr key={r.id ?? "primary"} className={r.isPrimary ? "font-medium" : undefined}>
-                    <td className="py-2 pr-3">{r.isPrimary ? `${r.name} (you)` : r.name}</td>
-                    <td className="tabular py-2 pr-3 text-right">{p ? num1(r.metrics.visibilityScore) : "—"}</td>
-                    <td className="tabular py-2 pr-3 text-right">{p ? pct(r.metrics.mentionRate) : "—"}</td>
-                    <td className="tabular py-2 pr-3 text-right">{p ? pct(r.metrics.shareOfVoice) : "—"}</td>
-                    <td className="tabular py-2 text-right">{num1(r.metrics.averagePosition)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+          <Card className="min-w-0 flex-1">
+            <CardHeader>
+              <CardTitle>Prompts you&apos;re losing</CardTitle>
+              <CardDescription>You&apos;re absent from the latest answers while competitors appear.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {o.losing.length ? (
+                <ul className="divide-y text-[13px]">
+                  {o.losing.map((l) => (
+                    <li key={l.promptId}>
+                      <Link href={`${base}/prompts/${l.promptId}${q}`} className="grid gap-0.5 py-2.5 hover:text-foreground">
+                        <span className="font-medium">{l.prompt.text}</span>
+                        <span className="text-xs text-muted-foreground">
+                          Priority P{l.prompt.priority}
+                          {l.competitor ? ` · ${l.competitor} leads` : ""}
+                        </span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-[13px] text-muted-foreground">{p ? "None — you appear in every prompt's latest answers, or no competitor does." : "No results yet."}</p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       </div>
+
+      <Card className="mt-4 min-w-0">
+        <CardHeader>
+          <CardTitle>Competitor performance</CardTitle>
+          <CardDescription>Same answers, scored for each brand.</CardDescription>
+        </CardHeader>
+        <CardContent className="overflow-x-auto pt-2">
+          <table className="w-full text-[13px]">
+            <thead className="text-left text-xs text-muted-foreground">
+              <tr>
+                <th className="py-2 pr-3 font-medium">Brand</th>
+                <th className="py-2 pr-3 text-right font-medium">Visibility</th>
+                <th className="py-2 pr-3 text-right font-medium">Mentions</th>
+                <th className="py-2 pr-3 text-right font-medium">SoV</th>
+                <th className="whitespace-nowrap py-2 text-right font-medium">Avg. pos.</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {o.competitorTable.map((r) => (
+                <tr key={r.id ?? "primary"} className={r.isPrimary ? "font-medium" : undefined}>
+                  <td className="whitespace-nowrap py-2 pr-3">{r.isPrimary ? `${r.name} (you)` : r.name}</td>
+                  <td className="tabular py-2 pr-3 text-right">{p ? num1(r.metrics.visibilityScore) : "—"}</td>
+                  <td className="tabular py-2 pr-3 text-right">{p ? pct(r.metrics.mentionRate) : "—"}</td>
+                  <td className="tabular py-2 pr-3 text-right">{p ? pct(r.metrics.shareOfVoice) : "—"}</td>
+                  <td className="tabular py-2 text-right">{num1(r.metrics.averagePosition)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
 
       {recentScans.length ? (
         <Card className="mt-4">

@@ -20,7 +20,7 @@ export function DateRangePicker() {
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger className="flex h-8 items-center gap-2 rounded-md border bg-card px-2.5 text-[13px] hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40">
+      <DropdownMenuTrigger className="flex h-8 shrink-0 items-center gap-2 whitespace-nowrap rounded-md border bg-card px-2.5 text-[13px] hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40">
         <CalendarDays className="size-3.5 text-muted-foreground" />
         <span className="hidden sm:inline">{label}</span>
         <span className="sm:hidden">{current}</span>

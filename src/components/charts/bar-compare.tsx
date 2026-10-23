@@ -1,6 +1,6 @@
 "use client";
 
-import { Bar, BarChart, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis, type YAxisTickContentProps } from "recharts";
 import { seriesColor } from "./series";
 
 export interface BarItem {
@@ -13,12 +13,25 @@ export interface BarItem {
 /** Horizontal bars, one per brand, value labelled at the bar end (identity is never color-only). */
 export function BarCompare({ items, max = 100, unit = "" }: { items: BarItem[]; max?: number; unit?: string }) {
   const height = Math.max(120, items.length * 36 + 16);
+  const labelWidth = Math.min(180, 16 + 7 * Math.max(...items.map((i) => i.name.length), 4));
   return (
     <div style={{ height }} className="w-full">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={items} layout="vertical" margin={{ top: 4, right: 40, bottom: 4, left: 4 }} barCategoryGap={8}>
           <XAxis type="number" domain={[0, max]} hide />
-          <YAxis type="category" dataKey="name" width={120} tick={{ fill: "var(--foreground)", fontSize: 12 }} tickLine={false} axisLine={false} />
+          <YAxis
+            type="category"
+            dataKey="name"
+            width={labelWidth}
+            tickLine={false}
+            axisLine={false}
+            // Single-line labels: Recharts' default tick wraps text to the axis width.
+            tick={({ x, y, payload }: YAxisTickContentProps) => (
+              <text x={x} y={y} dy={4} textAnchor="end" fontSize={12} fill="var(--foreground)">
+                {payload.value}
+              </text>
+            )}
+          />
           <Tooltip
             cursor={{ fill: "var(--accent)" }}
             content={({ active, payload }) =>

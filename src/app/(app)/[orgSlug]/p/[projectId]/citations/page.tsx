@@ -42,25 +42,25 @@ export default async function CitationsPage({ params, searchParams }: { params: 
 
         <div className="grid gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
           <Card className="min-w-0 overflow-x-auto">
-            <CardHeader>
+            <CardHeader className="pb-4">
               <CardTitle>Top cited domains</CardTitle>
               <CardDescription>Across {v.answers} answers in this period.</CardDescription>
             </CardHeader>
             <table className="w-full min-w-[620px] text-[13px]">
-              <thead className="border-y text-left text-xs text-muted-foreground">
+              <thead className="whitespace-nowrap border-y text-left text-xs text-muted-foreground">
                 <tr>
                   <th className="px-4 py-2.5 font-medium">Domain</th>
                   <th className="px-3 py-2.5 text-right font-medium">Citations</th>
                   <th className="px-3 py-2.5 text-right font-medium">Share</th>
-                  <th className="px-3 py-2.5 text-right font-medium">Prompts influenced</th>
-                  <th className="px-3 py-2.5 text-right font-medium">Answers mentioning you</th>
+                  <th className="px-3 py-2.5 text-right font-medium">Prompts</th>
+                  <th className="whitespace-nowrap px-3 py-2.5 text-right font-medium" title="Answers citing this domain that mention you">Mention you</th>
                   <th className="px-4 py-2.5 font-medium">Owner</th>
                 </tr>
               </thead>
               <tbody className="divide-y">
                 {v.domains.slice(0, 25).map((d) => (
                   <tr key={d.domain}>
-                    <td className="px-4 py-2.5 font-medium">{d.domain}</td>
+                    <td className="whitespace-nowrap px-4 py-2.5 font-medium">{d.domain}</td>
                     <td className="tabular px-3 py-2.5 text-right">{d.citations}</td>
                     <td className="tabular px-3 py-2.5 text-right">{pct(d.share)}</td>
                     <td className="tabular px-3 py-2.5 text-right">{d.promptsInfluenced}</td>
@@ -68,7 +68,7 @@ export default async function CitationsPage({ params, searchParams }: { params: 
                       {d.withPrimary} / {d.answers}
                     </td>
                     <td className="px-4 py-2.5">
-                      <Badge variant={d.ownerType === "THIRD_PARTY" ? "outline" : "default"}>{d.ownerName ? `${OWNER_LABEL[d.ownerType]}: ${d.ownerName}` : (OWNER_LABEL[d.ownerType] ?? d.ownerType)}</Badge>
+                      <Badge className="whitespace-nowrap" variant={d.ownerType === "THIRD_PARTY" ? "outline" : "default"}>{d.ownerName ? `${OWNER_LABEL[d.ownerType]}: ${d.ownerName}` : (OWNER_LABEL[d.ownerType] ?? d.ownerType)}</Badge>
                     </td>
                   </tr>
                 ))}
