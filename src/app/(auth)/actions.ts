@@ -8,6 +8,7 @@ import { formValues, isAppError, type ActionResult } from "@/lib/errors";
 import { rateLimit } from "@/lib/rate-limit";
 import { clientIpFromHeaders } from "@/lib/request";
 import { safeRedirectPath } from "@/lib/safe-redirect";
+import { appOrigin } from "@/lib/signup-policy";
 import { logger } from "@/lib/logger";
 
 const WINDOW_MS = 15 * 60 * 1000;
@@ -19,7 +20,7 @@ async function limited(bucket: string, limit: number): Promise<boolean> {
 }
 
 function safeRedirect(target: FormDataEntryValue | null): string {
-  return safeRedirectPath(target, process.env.AUTH_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000");
+  return safeRedirectPath(target, appOrigin());
 }
 
 export async function signInAction(_prev: ActionResult | null, formData: FormData): Promise<ActionResult> {

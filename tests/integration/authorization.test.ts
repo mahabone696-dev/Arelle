@@ -119,3 +119,16 @@ describe("registration", () => {
     await expectCode(registerUser({ name: "Jo", email: "jo@example.com", password: "another-password" }), "CONFLICT");
   });
 });
+
+describe("sign-up allow-list", () => {
+  it("rejects emails outside SIGNUP_ALLOWLIST and creates nothing", async () => {
+    process.env.SIGNUP_ALLOWLIST = "@allowed.com";
+    try {
+      await expect(registerUser({ name: "X", email: "x@blocked.com", password: "a-long-password" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      expect(await db.user.count({ where: { email: "x@blocked.com" } })).toBe(0);
+      await expect(registerUser({ name: "Y", email: "y@allowed.com", password: "a-long-password" })).resolves.toBeTruthy();
+    } finally {
+      delete process.env.SIGNUP_ALLOWLIST;
+    }
+  });
+});

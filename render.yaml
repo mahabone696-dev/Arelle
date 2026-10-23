@@ -1,0 +1,82 @@
+# Render Blueprint — web app, scan worker, Postgres and Key Value (Redis).
+# Dashboard → New → Blueprint → pick this repo/branch. See docs/DEPLOYMENT.md.
+#
+# Cost: web, Postgres and Key Value use free plans; background workers have no
+# free plan on Render, so the worker uses the smallest paid instance.
+
+services:
+  - type: web
+    name: arelle-web
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    # Migrations + platform seed (providers, model pricing, flags — never demo data in production)
+    # run on start so this also works on the free plan (no pre-deploy step there).
+    startCommand: pnpm db:deploy && NODE_ENV=production pnpm db:seed && pnpm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase: { name: arelle-db, property: connectionString }
+      - key: REDIS_URL
+        fromService: { type: keyvalue, name: arelle-redis, property: connectionString }
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: OPENAI_API_KEY
+        sync: false
+      # Comma-separated emails or @domains allowed to sign up. Keep this set on a public URL.
+      - key: SIGNUP_ALLOWLIST
+        sync: false
+      - key: PLATFORM_ADMIN_EMAILS
+        sync: false
+      - fromGroup: arelle-shared
+
+  - type: worker
+    name: arelle-worker
+    runtime: node
+    plan: 0.5c-512mb
+    region: oregon
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm worker:build
+    startCommand: pnpm worker:start
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase: { name: arelle-db, property: connectionString }
+      - key: REDIS_URL
+        fromService: { type: keyvalue, name: arelle-redis, property: connectionString }
+      - key: OPENAI_API_KEY
+        sync: false
+      - fromGroup: arelle-shared
+
+  - type: keyvalue
+    name: arelle-redis
+    plan: free
+    region: oregon
+    # BullMQ requires noeviction: evicted keys would silently drop queued jobs.
+    maxmemoryPolicy: noeviction
+    # Private network only.
+    ipAllowList: []
+
+databases:
+  - name: arelle-db
+    plan: free
+    region: oregon
+    databaseName: arelle
+    user: arelle
+    ipAllowList: []
+
+envVarGroups:
+  - name: arelle-shared
+    envVars:
+      - key: LOG_LEVEL
+        value: info
+      - key: OPENAI_SCAN_MODEL
+        value: gpt-4.1-mini
+      - key: OPENAI_ONBOARDING_MODEL
+        value: gpt-4.1-mini
+      # Conservative preview caps (~$0.03 per query with web search): ≤ $6/day across all orgs.
+      - key: SCAN_GLOBAL_DAILY_QUERY_CAP
+        value: "200"
+      - key: SCAN_ORG_DAILY_QUERY_CAP
+        value: "100"
+      - key: SCAN_MAX_QUERIES_PER_SCAN
+        value: "100"

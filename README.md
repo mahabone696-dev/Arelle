@@ -28,6 +28,10 @@ The seed creates a clearly labelled demo workspace (`demo@arelle.dev` /
 `demo-password-123`, override with `SEED_DEMO_PASSWORD`). Demo data is never
 seeded in production.
 
+## Deploying
+
+See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — one-click Render Blueprint (`render.yaml`) for web, worker, Postgres and Redis.
+
 ## Scripts
 
 | Command | Purpose |
