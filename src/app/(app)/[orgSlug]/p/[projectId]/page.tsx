@@ -20,6 +20,7 @@ import { ChartLegend, TrendChart } from "@/components/charts/trend-chart";
 import { Delta, num1, pct } from "@/components/dashboard/delta";
 import { ImpactBadge, OPPORTUNITY_LABELS } from "@/components/actions/labels";
 import { topOpportunities } from "@/server/opportunities/service";
+import { hasFeature } from "@/server/billing/limits";
 import type { OpportunityEvidence } from "@/server/opportunities/rules";
 import { runScanAction } from "./scan-actions";
 
@@ -46,7 +47,7 @@ export default async function OverviewPage({
     listRecentScans(user.id, projectId),
     getOverview(user.id, projectId, range),
   ]);
-  const top = await topOpportunities(user.id, projectId, 4);
+  const [top, actionEngine] = await Promise.all([topOpportunities(user.id, projectId, 4), hasFeature(access.organizationId, "actionEngine")]);
   const activeScan = recentScans.find((s) => s.status === "QUEUED" || s.status === "RUNNING");
   const rangeLabel = DATE_RANGES.find((r) => r.key === range)!.label;
   const base = `/${orgSlug}/p/${projectId}`;
@@ -124,6 +125,7 @@ export default async function OverviewPage({
                 .filter((u) => u.reason !== "DISABLED")
                 .map((u) => ({ displayName: u.displayName, label: UNAVAILABLE_LABELS[u.reason] })),
               blockedReason: preview.blockedReason,
+              upgradeRequired: preview.upgradeRequired,
             }}
           />
         </Card>
@@ -252,7 +254,7 @@ export default async function OverviewPage({
                   return (
                     <li key={op.id}>
                       <Link
-                        href={rec ? `${base}/actions/${rec.id}` : `${base}/opportunities`}
+                        href={rec && actionEngine ? `${base}/actions/${rec.id}` : `${base}/opportunities`}
                         className="grid gap-1 py-2.5 hover:text-foreground"
                       >
                         <span className="flex items-center gap-2 text-xs text-muted-foreground">

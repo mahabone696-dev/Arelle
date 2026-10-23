@@ -3,6 +3,8 @@ import { getProjectPage } from "@/server/auth/session";
 import { listOrganizationsForUser } from "@/server/organizations/service";
 import { listProjects } from "@/server/projects/service";
 import { can } from "@/server/auth/policy";
+import { getOrgPlan } from "@/server/billing/limits";
+import { PLANS } from "@/server/billing/plans";
 
 export default async function ProjectLayout({
   params,
@@ -13,10 +15,10 @@ export default async function ProjectLayout({
 }) {
   const { orgSlug, projectId } = await params;
   const { user, access } = await getProjectPage(orgSlug, projectId);
-  const [orgs, projects] = await Promise.all([listOrganizationsForUser(user.id), listProjects(user.id, access.organizationId)]);
+  const [orgs, projects, plan] = await Promise.all([listOrganizationsForUser(user.id), listProjects(user.id, access.organizationId), getOrgPlan(access.organizationId)]);
   const isDemo = orgs.find((o) => o.slug === orgSlug)?.isDemo ?? false;
   return (
-    <ProjectShell user={user} orgs={orgs} orgSlug={orgSlug} projects={projects} projectId={projectId} isDemo={isDemo} canCreate={can(access.role, "project:create")}>
+    <ProjectShell user={user} orgs={orgs} orgSlug={orgSlug} projects={projects} projectId={projectId} isDemo={isDemo} canCreate={can(access.role, "project:create")} planName={PLANS[plan.tier].name}>
       {children}
     </ProjectShell>
   );

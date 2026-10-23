@@ -1,6 +1,6 @@
 # AI Search Visibility (GEO) Platform — Implementation Plan
 
-Status: **Phase 7 complete** — Phase 8 next · Last updated: 2026-10-23
+Status: **Phase 8 complete** — Phase 9 next · Last updated: 2026-10-23
 
 This document is the agreed architecture and phased build plan. It is the
 source of truth for structure decisions; update it when a decision changes.
@@ -532,3 +532,18 @@ The provider differences are documented in [PROVIDERS.md](PROVIDERS.md):
 The seed has current pricing; the retired `sonar` chat-completions model is deactivated. `pnpm scan:smoke` runs every ready engine.
 
 Verified end to end against local stand-ins (documented response formats), through queue, worker, analysis, opportunities and dashboards. **Not verified against the live APIs** (no keys here).
+
+**Phase 7 review**: no blocking issues in the adapters. The unenforced plan *project* limit found during review is fixed in Phase 8.
+
+## 19. Phase 8 notes (as built)
+
+Plans, server-side limits, Stripe Checkout, Billing Portal and webhooks, the billing page, and upgrade prompts are all built; see [BILLING.md](BILLING.md).
+- **Effective tier:** canceled, unpaid, paused and incomplete subscriptions fall back to Free; past-due keeps the plan (grace).
+- **Project limit:** enforced under a per-organization lock.
+- **Downgrades:** only the oldest projects keep scanning.
+- **Scan admission:** checks cadence and the monthly query allowance. Failed or cancelled scans no longer use up the daily manual-scan allowance.
+- **Action Engine:** Growth and up, enforced in the service and shown as upgrade cards in the UI.
+- **Webhook:** signature-verified, idempotent (`StripeEvent`), and re-fetches the subscription from Stripe.
+- **Migration:** `stripe_events`.
+
+Verified against stripe-mock (unit and integration tests, plus a browser run covering Checkout redirect, signed webhook and replay). **Not yet run against a real Stripe test-mode account** (no key here); see the checklist in BILLING.md.

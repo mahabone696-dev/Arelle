@@ -30,6 +30,17 @@ services:
         sync: false
       - key: PERPLEXITY_API_KEY
         sync: false
+      # Stripe (billing). Set FEATURE_BILLING to "true" in arelle-shared once these are filled in.
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_STARTER
+        sync: false
+      - key: STRIPE_PRICE_GROWTH
+        sync: false
+      - key: STRIPE_PRICE_AGENCY
+        sync: false
       # Comma-separated emails or @domains allowed to sign up. Keep this set on a public URL.
       - key: SIGNUP_ALLOWLIST
         sync: false
@@ -90,6 +101,8 @@ envVarGroups:
       - key: FEATURE_GEMINI
         value: "false"
       - key: FEATURE_PERPLEXITY
+        value: "false"
+      - key: FEATURE_BILLING
         value: "false"
       # Conservative preview caps (~$0.03 per query with web search): ≤ $6/day across all orgs.
       - key: SCAN_GLOBAL_DAILY_QUERY_CAP

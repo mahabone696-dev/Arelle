@@ -12,7 +12,7 @@ import { db } from "@/server/db";
 import { getScanKillSwitch } from "@/server/system/settings";
 import { getReadyProvider, type ReadyProvider } from "@/server/providers/registry";
 import { isProviderError, ProviderError } from "@/server/providers/errors";
-import { planLimits } from "@/server/billing/plans";
+import { effectiveTier, planLimits } from "@/server/billing/plans";
 import { Prisma } from "@/generated/prisma/client";
 import { logger } from "@/lib/logger";
 import { captureException } from "@/lib/monitoring";
@@ -48,7 +48,7 @@ export async function executeScanJob(scanJobId: string, attempt: number, maxAtte
   const job = await db.scanJob.findUnique({
     where: { id: scanJobId },
     include: {
-      scan: { select: { id: true, status: true, projectId: true, project: { select: { organizationId: true, organization: { select: { subscription: { select: { planTier: true } } } } } } } },
+      scan: { select: { id: true, status: true, projectId: true, project: { select: { organizationId: true, organization: { select: { subscription: { select: { planTier: true, status: true } } } } } } } },
       prompt: { select: { text: true } },
       response: { select: { id: true } },
     },
@@ -82,7 +82,7 @@ export async function executeScanJob(scanJobId: string, attempt: number, maxAtte
   if (!provider) return fail(job.id, scanId, "PROVIDER_UNAVAILABLE", "Provider is no longer enabled or configured");
 
   const organizationId = job.scan.project.organizationId;
-  const orgCap = Math.min(planLimits(job.scan.project.organization.subscription?.planTier).queriesPerDay, deps.config.orgDailyQueryCap);
+  const orgCap = Math.min(planLimits(effectiveTier(job.scan.project.organization.subscription)).queriesPerDay, deps.config.orgDailyQueryCap);
   const exceeded = await deps.quota.reserve({ organizationId, providerSlug: provider.slug, caps: { global: deps.config.globalDailyQueryCap, org: orgCap, provider: provider.dailyQueryCap } });
   if (exceeded) {
     log.warn("scan_job.quota_exceeded", { scanJobId, scope: exceeded });

@@ -6,6 +6,7 @@ import { EmptyState } from "@/components/empty-state";
 import { Card } from "@/components/ui/card";
 import { ImpactBadge, OPPORTUNITY_LABELS, RecommendationStatusBadge } from "@/components/actions/labels";
 import { OpportunityStatusButton } from "@/components/actions/recommendation-controls";
+import { hasFeature } from "@/server/billing/limits";
 import { getProjectPage } from "@/server/auth/session";
 import { can } from "@/server/auth/policy";
 import { listOpportunities, opportunityCounts } from "@/server/opportunities/service";
@@ -40,7 +41,7 @@ export default async function OpportunitiesPage({ params, searchParams }: { para
   const { user, access } = await getProjectPage(orgSlug, projectId);
   const status = TABS.some((t) => t.status === sp.status) ? (sp.status as OpportunityStatus) : "OPEN";
   const type = TYPES.includes(sp.type as OpportunityType) ? (sp.type as OpportunityType) : undefined;
-  const [items, counts] = await Promise.all([listOpportunities(user.id, projectId, { status, type }), opportunityCounts(user.id, projectId)]);
+  const [items, counts, actionEngine] = await Promise.all([listOpportunities(user.id, projectId, { status, type }), opportunityCounts(user.id, projectId), hasFeature(access.organizationId, "actionEngine")]);
   const base = `/${orgSlug}/p/${projectId}`;
   const canEdit = can(access.role, "action:update");
   const href = (s: OpportunityStatus, t?: OpportunityType) => `${base}/opportunities?status=${s}${t ? `&type=${t}` : ""}`;
@@ -104,7 +105,14 @@ export default async function OpportunitiesPage({ params, searchParams }: { para
                   </div>
                   <OpportunityStatusButton status={o.status} canEdit={canEdit} setStatus={setOpportunityStatusAction.bind(null, orgSlug, projectId, o.id)} />
                 </div>
-                {o.recommendations.length ? (
+                {!actionEngine && o.recommendations.length ? (
+                  <p className="mt-3 border-t pt-2 text-[13px] text-muted-foreground">
+                    {o.recommendations.length} recommendation{o.recommendations.length === 1 ? "" : "s"} ready —{" "}
+                    <Link href={`/${orgSlug}/billing`} className="font-medium text-foreground underline underline-offset-2">
+                      available on Growth
+                    </Link>
+                  </p>
+                ) : o.recommendations.length ? (
                   <ul className="mt-3 divide-y border-t text-[13px]">
                     {o.recommendations.map((r) => (
                       <li key={r.id}>

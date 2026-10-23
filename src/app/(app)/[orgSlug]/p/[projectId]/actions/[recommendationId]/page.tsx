@@ -6,6 +6,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Delta, num1 } from "@/components/dashboard/delta";
 import { ImpactBadge, OPPORTUNITY_LABELS, RECOMMENDATION_LABELS, RecommendationStatusBadge } from "@/components/actions/labels";
 import { RecommendationControls } from "@/components/actions/recommendation-controls";
+import { UpgradeCard } from "@/components/billing/upgrade-card";
+import { hasFeature } from "@/server/billing/limits";
 import { getProjectPage } from "@/server/auth/session";
 import { can } from "@/server/auth/policy";
 import { getRecommendation } from "@/server/opportunities/service";
@@ -19,6 +21,9 @@ const date = (d: Date) => d.toISOString().slice(0, 10);
 export default async function RecommendationPage({ params }: { params: Promise<{ orgSlug: string; projectId: string; recommendationId: string }> }) {
   const { orgSlug, projectId, recommendationId } = await params;
   const { user, access } = await getProjectPage(orgSlug, projectId);
+  if (!(await hasFeature(access.organizationId, "actionEngine"))) {
+    return <UpgradeCard orgSlug={orgSlug} title="This recommendation is part of the Growth plan" description="Upgrade to see what to change, where and how, and to track the observed result." />;
+  }
   const view = await getRecommendation(user.id, projectId, recommendationId).catch((e) => {
     if (isAppError(e) && e.code === "NOT_FOUND") notFound();
     throw e;

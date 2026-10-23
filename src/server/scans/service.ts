@@ -14,9 +14,11 @@ import { writeAuditLog } from "@/server/audit-log/audit-log";
 import { getScanKillSwitch } from "@/server/system/settings";
 import { getProviderAvailability, type ProviderAvailability } from "@/server/providers/registry";
 import { enqueueScanDispatch } from "@/server/queue/queues";
-import { planLimits } from "@/server/billing/plans";
-import type { ScanType } from "@/generated/prisma/enums";
-import { AppError } from "@/lib/errors";
+import { tierName, type PlanLimits } from "@/server/billing/plans";
+import { assertProjectWithinPlan, getOrgPlan, limitError, plannedQueries, utcMonthStart } from "@/server/billing/limits";
+import type { PlanTier, ScanType } from "@/generated/prisma/enums";
+import type { Prisma } from "@/generated/prisma/client";
+import { AppError, isAppError } from "@/lib/errors";
 import { logger } from "@/lib/logger";
 import { captureException } from "@/lib/monitoring";
 import { rateLimit } from "@/lib/rate-limit";
@@ -42,6 +44,9 @@ export interface ScanPreview extends ScanPlan {
   unavailable: ProviderAvailability["unavailable"];
   killSwitch: boolean;
   blockedReason?: string;
+  /** The block is a plan limit an upgrade would lift. */
+  upgradeRequired: boolean;
+  planTier: PlanTier;
 }
 
 /** Demo workspaces only ever hold labelled demo data, so they never run paid scans. */
@@ -58,22 +63,58 @@ async function activePrompts(projectId: string) {
   });
 }
 
+type Client = Prisma.TransactionClient | typeof db;
+
+/**
+ * Plan checks for one scan of one project. Admission runs this inside its
+ * locked transaction; the preview runs it read-only to explain the block.
+ */
+async function assertPlanAllows(client: Client, organizationId: string, projectId: string, plan: { promptCount: number; expectedQueryCount: number }, tier: PlanTier, limits: PlanLimits) {
+  if (plan.promptCount > limits.prompts) {
+    throw limitError(`Your ${tierName(tier)} plan scans up to ${limits.prompts} prompts per project; ${plan.promptCount} are active. Deactivate some prompts or upgrade.`, { limit: "prompts", tier, max: limits.prompts, used: plan.promptCount });
+  }
+  await assertProjectWithinPlan(client, organizationId, projectId, tier, limits);
+  // Cadence ("weekly" / "daily" per plan): scans that actually ran count; failed or cancelled ones don't.
+  const last = await client.scan.findFirst({ where: { projectId, isDemo: false, status: { notIn: ["FAILED", "CANCELLED"] } }, orderBy: { createdAt: "desc" }, select: { createdAt: true } });
+  const nextAllowed = last ? new Date(last.createdAt.getTime() + limits.minHoursBetweenScans * 3_600_000) : null;
+  if (nextAllowed && nextAllowed > new Date()) {
+    throw limitError(`Your ${tierName(tier)} plan scans each project ${limits.minHoursBetweenScans >= 24 * 7 ? "once a week" : "once a day"}. Next scan available ${nextAllowed.toISOString().slice(0, 16).replace("T", " ")} UTC.`, { limit: "cadence", tier, nextAllowedAt: nextAllowed.toISOString() });
+  }
+  const monthUsed = await plannedQueries(client, organizationId, utcMonthStart());
+  if (monthUsed + plan.expectedQueryCount > limits.queriesPerMonth) {
+    throw limitError(`Monthly query allowance reached: ${monthUsed} of ${limits.queriesPerMonth} used this month, this scan needs ${plan.expectedQueryCount}.`, { limit: "queriesPerMonth", tier, max: limits.queriesPerMonth, used: monthUsed });
+  }
+  return { monthUsed };
+}
+
 /** What a scan would do right now (for the confirmation UI). Never enqueues anything. */
 export async function previewScan(userId: string, projectId: string, deps: ScanServiceDeps = defaultScanDeps()): Promise<ScanPreview> {
-  await requireProjectAccess(userId, projectId, "project:read");
-  const [kill, availability, prompts, demo] = await Promise.all([getScanKillSwitch(), deps.availability(), activePrompts(projectId), isDemoProject(projectId)]);
+  const access = await requireProjectAccess(userId, projectId, "project:read");
+  const [kill, availability, prompts, demo, orgPlan] = await Promise.all([getScanKillSwitch(), deps.availability(), activePrompts(projectId), isDemoProject(projectId), getOrgPlan(access.organizationId)]);
   const plan = await computeScanPlan(projectId, prompts, availability.ready);
   let blockedReason: string | undefined;
+  let upgradeRequired = false;
   if (demo) blockedReason = "Demo workspaces show sample data and can't run scans.";
   else if (kill.enabled) blockedReason = "Scanning is temporarily paused.";
   else if (!availability.ready.length) blockedReason = "No AI engines are available.";
   else if (!prompts.length) blockedReason = "Approve at least one prompt first.";
+  else {
+    try {
+      await assertPlanAllows(db, access.organizationId, projectId, plan, orgPlan.tier, orgPlan.limits);
+    } catch (error) {
+      if (!isAppError(error) || error.code !== "LIMIT_EXCEEDED") throw error;
+      blockedReason = error.message;
+      upgradeRequired = (error.details as { limit?: string } | undefined)?.limit !== "cadence";
+    }
+  }
   return {
     ...plan,
     providers: availability.ready.map((p) => ({ slug: p.slug, displayName: p.displayName, model: p.modelId, localized: p.adapter.capabilities.location })),
     unavailable: availability.unavailable,
     killSwitch: kill.enabled,
     blockedReason,
+    upgradeRequired,
+    planTier: orgPlan.tier,
   };
 }
 
@@ -102,11 +143,9 @@ export async function createScan(userId: string, projectId: string, options: { s
     throw new AppError("LIMIT_EXCEEDED", `This scan would run ${plan.expectedQueryCount} queries; the maximum per scan is ${cfg.maxQueriesPerScan}.`);
   }
 
-  const subscription = await db.subscription.findUnique({ where: { organizationId: access.organizationId }, select: { planTier: true } });
-  const limits = planLimits(subscription?.planTier);
-  if (plan.promptCount > limits.prompts) {
-    throw new AppError("LIMIT_EXCEEDED", `Your plan scans up to ${limits.prompts} prompts per project; ${plan.promptCount} are active. Deactivate some prompts or upgrade.`);
-  }
+  // Effective tier: a canceled or unpaid subscription falls back to Free limits.
+  const { tier, limits } = await getOrgPlan(access.organizationId);
+
   const orgCap = Math.min(limits.queriesPerDay, cfg.orgDailyQueryCap);
   const since = utcDayStart();
 
@@ -116,12 +155,16 @@ export async function createScan(userId: string, projectId: string, options: { s
     const active = await tx.scan.findFirst({ where: { projectId, status: { in: ["QUEUED", "RUNNING"] } }, select: { id: true } });
     if (active) throw new AppError("CONFLICT", "A scan is already running for this project.", { scanId: active.id });
 
+    const { monthUsed } = await assertPlanAllows(tx, access.organizationId, projectId, plan, tier, limits);
+
     if (scanType === "MANUAL") {
-      const manualToday = await tx.scan.count({ where: { project: { organizationId: access.organizationId }, scanType: "MANUAL", createdAt: { gte: since }, isDemo: false } });
+      // Scans that failed or were cancelled don't use up the allowance (their spent queries still count against the query caps).
+      const manualToday = await tx.scan.count({ where: { project: { organizationId: access.organizationId }, scanType: "MANUAL", createdAt: { gte: since }, isDemo: false, status: { notIn: ["FAILED", "CANCELLED"] } } });
       if (manualToday >= limits.manualScansPerDay) {
-        throw new AppError("LIMIT_EXCEEDED", `Your plan allows ${limits.manualScansPerDay} manual scan${limits.manualScansPerDay === 1 ? "" : "s"} per day.`);
+        throw limitError(`Your ${tierName(tier)} plan allows ${limits.manualScansPerDay} manual scan${limits.manualScansPerDay === 1 ? "" : "s"} per day.`, { limit: "manualScans", tier, max: limits.manualScansPerDay });
       }
     }
+
 
     // Planned queries already admitted today (skipped jobs never cost anything).
     const plannedToday = (where: object) => tx.scanJob.count({ where: { createdAt: { gte: since }, status: { not: "SKIPPED" }, ...where } });
@@ -152,7 +195,7 @@ export async function createScan(userId: string, projectId: string, options: { s
           providers: availability.ready.map((p) => ({ providerId: p.providerId, slug: p.slug, model: p.modelId })),
           unavailable: availability.unavailable,
           perProvider: plan.perProvider,
-          limits: { planTier: subscription?.planTier ?? "FREE", orgDailyQueryCap: orgCap, orgUsedBefore: orgUsed },
+          limits: { planTier: tier, orgDailyQueryCap: orgCap, orgUsedBefore: orgUsed, queriesPerMonth: limits.queriesPerMonth, monthUsedBefore: monthUsed },
         },
       },
     });

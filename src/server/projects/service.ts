@@ -5,6 +5,7 @@ import { AppError } from "@/lib/errors";
 import { toLocale } from "@/lib/i18n";
 import { logger } from "@/lib/logger";
 import { Prisma } from "@/generated/prisma/client";
+import { assertCanCreateProject } from "@/server/billing/limits";
 import { createProjectSchema, updateProjectSchema, type CreateProjectInput, type UpdateProjectInput } from "./schemas";
 
 const projectSummarySelect = {
@@ -23,9 +24,9 @@ export type ProjectSummary = Prisma.ProjectGetPayload<{ select: typeof projectSu
 export async function createProject(userId: string, organizationId: string, input: CreateProjectInput) {
   const access = await requireOrgAccess(userId, { id: organizationId }, "project:create");
   const data = createProjectSchema.parse(input);
-  // Plan limits on project count are enforced here in Phase 8 (billing).
   try {
     const project = await db.$transaction(async (tx) => {
+      await assertCanCreateProject(tx, access.organizationId, data.domain);
       const created = await tx.project.create({
         data: {
           organizationId: access.organizationId,

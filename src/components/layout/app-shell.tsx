@@ -22,6 +22,7 @@ export function ProjectShell({
   projectId,
   isDemo,
   canCreate,
+  planName,
   children,
 }: {
   user: ShellUser;
@@ -32,6 +33,8 @@ export function ProjectShell({
   isDemo: boolean;
   /** Role may create projects (shows "New project"). */
   canCreate: boolean;
+  /** Effective plan name, shown next to the billing link. */
+  planName: string;
   children: React.ReactNode;
 }) {
   const basePath = `/${orgSlug}/p/${projectId}`;
@@ -50,6 +53,12 @@ export function ProjectShell({
           <Suspense>
             <SidebarNav basePath={basePath} />
           </Suspense>
+        </div>
+        <div className="border-t px-4 py-3">
+          <Link href={`/${orgSlug}/billing`} className="flex items-center justify-between gap-2 rounded-md text-[13px] text-muted-foreground hover:text-foreground">
+            Plan & billing
+            <span className="rounded border px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide">{planName}</span>
+          </Link>
         </div>
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">

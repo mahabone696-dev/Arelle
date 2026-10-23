@@ -919,3 +919,14 @@ model PublicAudit {
   @@index([ipHash, createdAt])
   @@index([domain, createdAt])
 }
+
+/// Stripe webhook events we've received; makes processing idempotent (Stripe delivers at least once).
+model StripeEvent {
+  id          String    @id
+  type        String
+  receivedAt  DateTime  @default(now()) @db.Timestamptz(3)
+  processedAt DateTime? @db.Timestamptz(3)
+  error       String?   @db.Text
+
+  @@index([receivedAt])
+}

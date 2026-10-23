@@ -8,6 +8,8 @@ import { EmptyState } from "@/components/empty-state";
 import { TrendChart } from "@/components/charts/trend-chart";
 import { Delta, num1, pct } from "@/components/dashboard/delta";
 import { PromptStatusBadge } from "@/components/dashboard/prompt-status";
+import { UpgradeCard } from "@/components/billing/upgrade-card";
+import { hasFeature } from "@/server/billing/limits";
 import { getProjectPage } from "@/server/auth/session";
 import { getPromptDetail } from "@/server/dashboard/metrics";
 import { recommendationsForPrompt } from "@/server/opportunities/service";
@@ -32,13 +34,14 @@ export default async function PromptDetailPage({
   searchParams: Promise<{ range?: string }>;
 }) {
   const [{ orgSlug, projectId, promptId }, sp] = await Promise.all([params, searchParams]);
-  const { user } = await getProjectPage(orgSlug, projectId);
+  const { user, access } = await getProjectPage(orgSlug, projectId);
   const range = parseDateRange(sp.range);
   const d = await getPromptDetail(user.id, projectId, promptId, range).catch((e) => {
     if (isAppError(e)) notFound();
     throw e;
   });
-  const recs = await recommendationsForPrompt(user.id, projectId, promptId);
+  const actionEngine = await hasFeature(access.organizationId, "actionEngine");
+  const recs = actionEngine ? await recommendationsForPrompt(user.id, projectId, promptId) : [];
   const base = `/${orgSlug}/p/${projectId}`;
   const mentionedIn = d.latest.filter((a) => a.mentions.some((m) => m.isPrimaryBrand)).length;
   const status = promptStatus(d.latest);
@@ -114,7 +117,11 @@ export default async function PromptDetailPage({
                 )}
                 <div className="mt-4 border-t pt-3">
                   <h3 className="text-sm font-medium">Recommended actions</h3>
-                  {recs.length ? (
+                  {!actionEngine ? (
+                    <div className="mt-2">
+                      <UpgradeCard compact orgSlug={orgSlug} title="Recommended actions" description="Concrete steps for this prompt are on the Growth plan." />
+                    </div>
+                  ) : recs.length ? (
                     <ul className="mt-1 divide-y text-[13px]">
                       {recs.map((r) => (
                         <li key={r.id}>

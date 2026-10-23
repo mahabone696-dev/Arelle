@@ -23,6 +23,8 @@ async function setup() {
   for (const slug of ["openai", "gemini"]) providers.push(await db.aIProvider.create({ data: { slug, displayName: slug } }));
   const user = await db.user.create({ data: { email: `o${Math.random()}@t.com` } });
   const org = await createOrganization(user.id, { name: "Opp Co" });
+  // Recommendations and action tracking are a Growth-plan feature.
+  await db.subscription.update({ where: { organizationId: org.id }, data: { planTier: "GROWTH" } });
   const project = await db.project.create({ data: { organizationId: org.id, name: "Acme CRM", domain: "acme.example", country: "US", language: "en", locale: "en-US" } });
   await db.brand.create({ data: { projectId: project.id, name: "Acme CRM", domain: "acme.example", industry: "CRM" } });
   for (const [name, domain] of [["HubSpot", "hubspot.com"], ["Pipedrive", "pipedrive.com"]]) await db.competitor.create({ data: { projectId: project.id, name: name!, domain } });
@@ -203,6 +205,7 @@ describe("action tracking", () => {
 
     const mallory = await db.user.create({ data: { email: `m${Math.random()}@t.com` } });
     const other = await createOrganization(mallory.id, { name: "Other" });
+    await db.subscription.update({ where: { organizationId: other.id }, data: { planTier: "GROWTH" } });
     const otherProject = await db.project.create({ data: { organizationId: other.id, name: "X", domain: "x.example", country: "US", language: "en", locale: "en-US" } });
     await expect(listRecommendations(mallory.id, ctx.project.id)).rejects.toMatchObject({ code: "NOT_FOUND" });
     // A recommendation id from another project is not reachable through your own project.

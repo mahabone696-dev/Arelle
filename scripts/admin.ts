@@ -7,6 +7,7 @@
  *   pnpm admin provider enable openai | disable openai
  *   pnpm admin analyze <scanId>                # (re)run response analysis + snapshots for a scan
  *   pnpm admin opportunities <projectId>       # re-evaluate opportunities and recommendations now
+ *   pnpm admin plan <orgSlug> [FREE|STARTER|GROWTH|AGENCY]  # show or set a plan by hand (no Stripe)
  */
 import "dotenv/config";
 import { db } from "@/server/db";
@@ -53,7 +54,23 @@ async function main() {
     for (const o of open) console.log(`  ${String(Math.round(o.impactScore)).padStart(3)}  ${o.type.padEnd(21)} ${o.title}`);
     return;
   }
-  throw new Error("usage: admin kill-switch|provider|analyze|opportunities ...");
+  if (area === "plan") {
+    if (!action) throw new Error("usage: plan <orgSlug> [FREE|STARTER|GROWTH|AGENCY]");
+    const org = await db.organization.findUniqueOrThrow({ where: { slug: action }, include: { subscription: true } });
+    if (arg) {
+      const tier = arg.toUpperCase();
+      if (!["FREE", "STARTER", "GROWTH", "AGENCY"].includes(tier)) throw new Error(`unknown plan ${arg}`);
+      if (org.subscription?.stripeSubscriptionId && !["CANCELED", "UNPAID", "INCOMPLETE"].includes(org.subscription.status)) {
+        throw new Error("This organization has a live Stripe subscription; change it in Stripe (the webhook keeps us in sync).");
+      }
+      await db.subscription.upsert({ where: { organizationId: org.id }, create: { organizationId: org.id, planTier: tier as "FREE", status: "ACTIVE" }, update: { planTier: tier as "FREE", status: "ACTIVE" } });
+      await db.auditLog.create({ data: { organizationId: org.id, action: "billing.plan_set_manually", entityType: "Subscription", metadata: { tier, actor } } });
+    }
+    const sub = await db.subscription.findUnique({ where: { organizationId: org.id } });
+    console.log(`${org.slug}: ${sub?.planTier ?? "FREE"} (${sub?.status ?? "—"})${sub?.stripeSubscriptionId ? ` · stripe ${sub.stripeSubscriptionId}` : ""}`);
+    return;
+  }
+  throw new Error("usage: admin kill-switch|provider|analyze|opportunities|plan ...");
 }
 
 main()

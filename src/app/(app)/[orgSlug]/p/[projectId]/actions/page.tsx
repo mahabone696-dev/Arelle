@@ -6,6 +6,8 @@ import { EmptyState } from "@/components/empty-state";
 import { Card } from "@/components/ui/card";
 import { Delta, num1 } from "@/components/dashboard/delta";
 import { ImpactBadge, RECOMMENDATION_LABELS } from "@/components/actions/labels";
+import { UpgradeCard } from "@/components/billing/upgrade-card";
+import { hasFeature } from "@/server/billing/limits";
 import { getProjectPage } from "@/server/auth/session";
 import { listRecommendations } from "@/server/opportunities/service";
 import type { RecommendationStatus } from "@/generated/prisma/enums";
@@ -60,7 +62,15 @@ function Row({ r, base }: { r: Rec; base: string }) {
 
 export default async function ActionsPage({ params }: { params: Promise<{ orgSlug: string; projectId: string }> }) {
   const { orgSlug, projectId } = await params;
-  const { user } = await getProjectPage(orgSlug, projectId);
+  const { user, access } = await getProjectPage(orgSlug, projectId);
+  if (!(await hasFeature(access.organizationId, "actionEngine"))) {
+    return (
+      <>
+        <PageHeader title="Actions" description="Recommended work and the visibility change observed after you implement it." />
+        <UpgradeCard orgSlug={orgSlug} title="Recommendations and action tracking are on the Growth plan" description="Turn each opportunity into concrete steps, mark work as implemented, and see the observed before/after change. Opportunities stay visible on every plan." />
+      </>
+    );
+  }
   const all = await listRecommendations(user.id, projectId);
   const base = `/${orgSlug}/p/${projectId}`;
   // Open recommendations only for opportunities still detected; anything acted on always stays visible.

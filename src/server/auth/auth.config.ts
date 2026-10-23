@@ -4,7 +4,8 @@
  */
 import type { NextAuthConfig } from "next-auth";
 
-export const PUBLIC_PATHS = ["/sign-in", "/sign-up", "/api/auth", "/api/health", "/audit", "/r/"];
+// /api/stripe/webhook authenticates by Stripe signature, not by session.
+export const PUBLIC_PATHS = ["/sign-in", "/sign-up", "/api/auth", "/api/health", "/api/stripe/webhook", "/audit", "/r/"];
 
 export function isPublicPath(pathname: string): boolean {
   if (pathname === "/") return true;

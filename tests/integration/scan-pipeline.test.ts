@@ -248,7 +248,8 @@ describe("scan admission limits", () => {
     const { user, project } = await setupProject(FIVE);
     const deps = { ...noQueue(), config: { ...scanConfigFromEnv(), orgDailyQueryCap: 8 } };
     const first = await createScan(user.id, project.id, {}, deps);
-    await db.scan.update({ where: { id: first.id }, data: { status: "COMPLETED" } });
+    // Move the first scan out of the plan's cadence window; its jobs still count for today.
+    await db.scan.update({ where: { id: first.id }, data: { status: "COMPLETED", createdAt: new Date(Date.now() - 2 * 86_400_000) } });
     await expect(createScan(user.id, project.id, {}, deps)).rejects.toMatchObject({ code: "LIMIT_EXCEEDED", message: expect.stringContaining("5 of 8") });
     // Nothing was created by the refused attempt.
     expect(await db.scan.count({ where: { projectId: project.id } })).toBe(1);

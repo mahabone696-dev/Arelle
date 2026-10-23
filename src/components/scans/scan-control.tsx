@@ -16,6 +16,7 @@ export interface ScanPreviewData {
   providers: Array<{ displayName: string; model: string; localized: boolean }>;
   unavailable: Array<{ displayName: string; label: string }>;
   blockedReason?: string;
+  upgradeRequired?: boolean;
 }
 
 interface Progress {
@@ -179,7 +180,19 @@ export function ScanControl({
           <Play /> Run scan
         </Button>
       )}
-      {blocked ? <span className="text-xs text-muted-foreground">{blocked}</span> : null}
+      {blocked ? (
+        <span className="max-w-96 text-xs text-muted-foreground">
+          {blocked}
+          {preview.upgradeRequired ? (
+            <>
+              {" "}
+              <Link href={`/${orgSlug}/billing`} className="font-medium text-foreground underline underline-offset-2">
+                See plans
+              </Link>
+            </>
+          ) : null}
+        </span>
+      ) : null}
       {error ? (
         <span role="alert" className="text-xs text-destructive">
           {error}

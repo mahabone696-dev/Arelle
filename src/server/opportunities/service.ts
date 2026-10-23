@@ -18,6 +18,7 @@ import { resolveWeights } from "@/server/scoring/visibility";
 import { subjectMetrics } from "@/server/dashboard/aggregate";
 import { loadProjectAnswers } from "@/server/dashboard/answers";
 import { AppError } from "@/lib/errors";
+import { assertFeature } from "@/server/billing/limits";
 import { logger } from "@/lib/logger";
 import { detectOpportunities, type OpportunityEvidence } from "./rules";
 import { recommend } from "./recommend";
@@ -165,6 +166,8 @@ async function scopeScore(projectId: string, isDemo: boolean, scope: string[], f
 
 async function loadRecommendation(userId: string, projectId: string, recommendationId: string, permission: "project:read" | "action:update") {
   const access = await requireProjectAccess(userId, projectId, permission);
+  // Recommendations and action tracking are a paid feature (Action Engine).
+  await assertFeature(access.organizationId, "actionEngine");
   const rec = await db.recommendation.findFirst({
     where: { id: recommendationId, opportunity: { projectId } },
     include: { opportunity: true, actions: { orderBy: { createdAt: "desc" }, include: { measurements: { orderBy: { measuredAt: "asc" } } } } },
@@ -336,7 +339,8 @@ export async function opportunityCounts(userId: string, projectId: string) {
 }
 
 export async function listRecommendations(userId: string, projectId: string) {
-  await requireProjectAccess(userId, projectId, "project:read");
+  const access = await requireProjectAccess(userId, projectId, "project:read");
+  await assertFeature(access.organizationId, "actionEngine");
   return db.recommendation.findMany({
     where: { opportunity: { projectId } },
     orderBy: [{ opportunity: { impactScore: "desc" } }, { createdAt: "asc" }],
@@ -380,7 +384,8 @@ export async function promptOpportunities(userId: string, projectId: string) {
 
 /** Recommendations for one prompt's open opportunities (prompt detail). */
 export async function recommendationsForPrompt(userId: string, projectId: string, promptId: string) {
-  await requireProjectAccess(userId, projectId, "project:read");
+  const access = await requireProjectAccess(userId, projectId, "project:read");
+  await assertFeature(access.organizationId, "actionEngine");
   return db.recommendation.findMany({
     // Open work for opportunities still detected, plus anything already planned or implemented.
     where: { opportunity: { projectId, promptId }, OR: [{ status: "OPEN", opportunity: { status: "OPEN" } }, { status: { in: ["PLANNED", "IMPLEMENTED"] } }] },

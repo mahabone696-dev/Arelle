@@ -8,6 +8,8 @@ async function setup(isDemo = true) {
   for (const slug of ["openai", "gemini", "perplexity"]) await db.aIProvider.create({ data: { slug, displayName: slug === "openai" ? "ChatGPT" : slug[0]!.toUpperCase() + slug.slice(1) } });
   const user = await db.user.create({ data: { email: `d${Math.random()}@t.com` } });
   const org = await createOrganization(user.id, { name: "Dash Co" });
+  // The demo history includes an implemented recommendation (Growth-plan feature).
+  await db.subscription.update({ where: { organizationId: org.id }, data: { planTier: "GROWTH" } });
   await db.organization.update({ where: { id: org.id }, data: { isDemo } });
   const project = await db.project.create({ data: { organizationId: org.id, name: "Northwind CRM", domain: "demo-crm.example", country: "US", language: "en", locale: "en-US" } });
   await db.brand.create({ data: { projectId: project.id, name: "Northwind CRM", domain: "demo-crm.example" } });
