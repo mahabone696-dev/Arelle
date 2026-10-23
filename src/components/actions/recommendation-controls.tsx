@@ -73,7 +73,7 @@ export function RecommendationControls({
       ) : null}
       {showForm && status !== "DISMISSED" ? (
         <form action={formAction} className="grid gap-3 rounded-md border bg-muted/30 p-4">
-          <div className="grid gap-3 sm:grid-cols-[180px_1fr]">
+          <div className="grid gap-3">
             <FormField id="implementedAt" label="Implemented on" error={state && !state.ok ? state.fieldErrors?.implementedAt?.[0] : undefined}>
               <Input id="implementedAt" name="implementedAt" type="date" required max={today} defaultValue={v?.implementedAt || today} />
             </FormField>
