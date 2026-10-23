@@ -9,8 +9,8 @@ Architecture, data model and the phased build plan live in
 ## Stack
 
 Next.js 16 (App Router) · TypeScript · Tailwind CSS 4 · shadcn/ui · PostgreSQL ·
-Prisma 7 · Auth.js v5 · Zod · Vitest. Redis/BullMQ workers, AI provider
-adapters, Recharts and Stripe arrive in later phases.
+Prisma 7 · Auth.js v5 · Zod · Vitest · Redis/BullMQ workers · Recharts · Stripe.
+Answer engines: OpenAI, Gemini, Perplexity (see [`docs/PROVIDERS.md`](docs/PROVIDERS.md)).
 
 ## Local development
 
@@ -21,8 +21,13 @@ pnpm install
 cp .env.example .env          # set DATABASE_URL and AUTH_SECRET
 pnpm db:migrate               # apply migrations
 pnpm db:seed                  # providers, feature flags, and a DEMO workspace
-pnpm dev
+pnpm dev                      # web app
+pnpm worker:dev               # background workers (scans, analysis, free audits) — needs REDIS_URL
 ```
+
+Public pages: `/` (landing), `/audit` (free audit, `FEATURE_PUBLIC_AUDIT="true"`),
+`/r/<token>` (shared reports). Platform admins (emails in `PLATFORM_ADMIN_EMAILS`)
+get `/admin`, including the global scan kill switch.
 
 The seed creates a clearly labelled demo workspace (`demo@arelle.dev` /
 `demo-password-123`, override with `SEED_DEMO_PASSWORD`). Demo data is never
@@ -46,6 +51,7 @@ See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — one-click Render Blueprint (`
 ## Layout
 
 - `src/app` — routes and UI only.
-- `src/server` — business logic (framework-agnostic, reused by the future worker).
+- `src/server` — business logic (framework-agnostic, shared by web and worker).
+- `worker` — BullMQ worker entry point.
 - `src/lib` — shared utilities (logger, monitoring, domain validation, i18n).
 - `prisma` — schema, migrations, seed.

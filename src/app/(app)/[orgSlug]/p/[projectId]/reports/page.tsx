@@ -19,7 +19,7 @@ const STATUS = { ACTIVE: "success", EXPIRED: "outline", REVOKED: "default" } as 
 export default async function ReportsPage({ params }: { params: Promise<{ orgSlug: string; projectId: string }> }) {
   const { orgSlug, projectId } = await params;
   const { user, access } = await getProjectPage(orgSlug, projectId);
-  const { entitled, links } = await listShareLinks(user.id, projectId);
+  const { entitled, enabled, links } = await listShareLinks(user.id, projectId);
   const base = `/${orgSlug}/p/${projectId}`;
   const canShare = can(access.role, "report:share");
 
@@ -34,7 +34,9 @@ export default async function ReportsPage({ params }: { params: Promise<{ orgSlu
           </Button>
         }
       />
-      {!entitled ? (
+      {!enabled ? (
+        <p className="rounded-lg border bg-card px-5 py-4 text-[13px] text-muted-foreground">Report sharing is turned off on this deployment. Existing links are paused. You can still preview the report.</p>
+      ) : !entitled ? (
         <UpgradeCard orgSlug={orgSlug} title="Share links are on the Agency plan" description="Send clients a live, read-only report with visibility, trend, competitors, winning and losing prompts, citation gaps, opportunities and completed actions. You can preview the report on any plan." />
       ) : (
         <div className="grid gap-4">

@@ -18,7 +18,8 @@ import { isFeatureEnabled } from "@/server/flags/flags";
 import { getScanKillSwitch } from "@/server/system/settings";
 import { getProviderAvailability, type ReadyProvider } from "@/server/providers/registry";
 import { enqueuePublicAudit } from "@/server/queue/queues";
-import { crawlSite, type CrawlResult } from "@/server/crawler/crawler";
+import { crawlSite } from "@/server/crawler/crawler";
+import { guessCategory } from "./category";
 import { crawlLimitsFromEnv } from "@/server/crawler/config";
 import { extractBrandDeterministic, extractBrandWithAI } from "@/server/onboarding/brand-extraction";
 import { suggestCompetitorsWithAI } from "@/server/onboarding/competitors";
@@ -77,7 +78,8 @@ export function checkFormToken(token: string | undefined, now = Date.now()): "ok
   return "ok";
 }
 
-export const ipHash = (ip: string) => createHash("sha256").update(`${secret()}:${ip}`).digest("hex");
+/** IPs are never stored: only a salted hash (AUDIT_IP_SALT, falling back to AUTH_SECRET). */
+export const ipHash = (ip: string) => createHash("sha256").update(`${process.env.AUDIT_IP_SALT || secret()}:${ip}`).digest("hex");
 
 // ── Request ───────────────────────────────────────────────────
 
@@ -99,7 +101,7 @@ export async function requestAudit(raw: unknown, ip: string, deps: AuditDeps = d
   if (!(await isFeatureEnabled("publicAudit"))) throw new AppError("FEATURE_DISABLED", "The free audit isn't available right now.");
   const input = auditRequestSchema.parse(raw);
   // Bots: the honeypot or a bad/instant token get a generic answer and cost nothing.
-  if (input.website || checkFormToken(input.formToken, now.getTime()) !== "ok") throw new AppError("VALIDATION", "Please reload the page and try again.");
+  if (input.website || checkFormToken(input.formToken, now.getTime()) !== "ok") throw new AppError("VALIDATION", "Please wait a moment and try again. If this keeps happening, reload the page.");
   const normalized = normalizeDomain(input.domain);
   if (!normalized.ok) throw new AppError("VALIDATION", normalized.reason);
   const domain = normalized.domain;
@@ -272,19 +274,6 @@ export async function runAudit(auditId: string, deps: AuditRunDeps = defaultAudi
     log.error("audit.crashed", { auditId, error });
     await fail("Something went wrong while auditing this website.");
   }
-}
-
-/**
- * Without an AI model, use the homepage's own short headline as the category
- * ("CRM software for small teams"). Long marketing sentences are rejected:
- * a wrong category would produce misleading prompts, so we fail instead.
- */
-export function guessCategory(crawl: CrawlResult, brandName: string): string {
-  const home = crawl.pages[0];
-  if (!home) return "";
-  const brandRe = new RegExp(brandName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
-  const candidates = [...home.headings.h1, ...home.title.split(/\s[|—–-]\s/)].map((t) => t.replace(brandRe, "").replace(/^[\s:|—–-]+|[\s:|—–.!-]+$/g, "").trim());
-  return candidates.find((c) => /^[\p{L}\p{N}][\p{L}\p{N}\s&'-]{2,60}$/u.test(c) && c.split(/\s+/).length <= 6) ?? "";
 }
 
 function pickPrompts(templates: ReturnType<typeof templatePrompts>) {

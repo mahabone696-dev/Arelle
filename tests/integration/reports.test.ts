@@ -24,6 +24,7 @@ async function setup(tier: PlanTier = "AGENCY", withData = false) {
 describe("shareable reports", () => {
   let ctx: Awaited<ReturnType<typeof setup>>;
   beforeEach(async () => {
+    process.env.FEATURE_REPORTS = "true";
     ctx = await setup("AGENCY", true);
   }, 60_000);
 
@@ -63,6 +64,12 @@ describe("shareable reports", () => {
     expect(await resolveShare(live.token)).toEqual({ ok: false, reason: "PLAN" });
     await db.subscription.update({ where: { organizationId: ctx.org.id }, data: { status: "ACTIVE" } });
     expect((await resolveShare(live.token)).ok).toBe(true);
+
+    // The feature flag is an off switch for every link.
+    process.env.FEATURE_REPORTS = "false";
+    expect(await resolveShare(live.token)).toEqual({ ok: false, reason: "PLAN" });
+    await expect(createShareLink(ctx.user.id, ctx.project.id, {})).rejects.toMatchObject({ code: "FEATURE_DISABLED" });
+    process.env.FEATURE_REPORTS = "true";
 
     const { links } = await listShareLinks(ctx.user.id, ctx.project.id);
     expect(links.map((l) => l.status).sort()).toEqual(["ACTIVE", "ACTIVE", "REVOKED"]);

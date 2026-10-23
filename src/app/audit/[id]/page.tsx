@@ -15,7 +15,7 @@ export const metadata: Metadata = { title: "Your AI visibility audit", robots: {
 export const dynamic = "force-dynamic";
 
 const TEASER = [
-  { key: "lostPrompts", label: "Lost prompts", hint: "Buyer questions where AI named competitors but not you" },
+  { key: "lostPrompts", label: "Lost prompts", hint: "Buyer questions where the AI answer didn't mention you" },
   { key: "citationOpportunities", label: "Citation opportunities", hint: "Sources AI cites in answers that leave you out" },
   { key: "recommendedActions", label: "Recommended actions", hint: "Concrete changes to win those answers" },
 ] as const;
@@ -142,7 +142,7 @@ export default async function AuditResultPage({ params }: { params: Promise<{ id
                 <li key={p.text} className="flex items-start gap-2.5 py-2">
                   {p.mentioned ? <Check className="mt-0.5 size-4 shrink-0 text-success" aria-label="Mentioned" /> : <X className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-label="Not mentioned" />}
                   <span className="min-w-0 flex-1">{p.text}</span>
-                  <span className="whitespace-nowrap text-xs text-muted-foreground">{p.mentioned ? (p.position ? `#${p.position} brand named` : "mentioned") : "not mentioned"}</span>
+                  <span className="whitespace-nowrap text-xs text-muted-foreground">{p.mentioned ? (p.position ? `named #${p.position}` : "mentioned") : "not mentioned"}</span>
                 </li>
               ))}
             </ul>

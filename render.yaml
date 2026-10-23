@@ -22,6 +22,8 @@ services:
         fromService: { type: keyvalue, name: arelle-redis, property: connectionString }
       - key: AUTH_SECRET
         generateValue: true
+      - key: AUDIT_IP_SALT
+        generateValue: true
       - key: OPENAI_API_KEY
         sync: false
       # Optional: Gemini / Perplexity engines (also set FEATURE_GEMINI / FEATURE_PERPLEXITY below
@@ -104,6 +106,13 @@ envVarGroups:
         value: "false"
       - key: FEATURE_BILLING
         value: "false"
+      - key: FEATURE_REPORTS
+        value: "true"
+      # Free public audit (/audit). Each audit costs up to 5 engine queries.
+      - key: FEATURE_PUBLIC_AUDIT
+        value: "false"
+      - key: PUBLIC_AUDIT_DAILY_CAP
+        value: "20"
       # Conservative preview caps (~$0.03 per query with web search): ≤ $6/day across all orgs.
       - key: SCAN_GLOBAL_DAILY_QUERY_CAP
         value: "200"

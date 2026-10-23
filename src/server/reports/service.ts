@@ -13,6 +13,7 @@ import { db } from "@/server/db";
 import { requireProjectAccess } from "@/server/auth/authorization";
 import { writeAuditLog } from "@/server/audit-log/audit-log";
 import { assertFeature, hasFeature } from "@/server/billing/limits";
+import { isFeatureEnabled } from "@/server/flags/flags";
 import { buildProjectReport } from "@/server/dashboard/metrics";
 import { AppError } from "@/lib/errors";
 import { parseDateRange, type DateRangeKey } from "@/lib/date-range";
@@ -42,6 +43,7 @@ export const shareSchema = z.object({
 export async function createShareLink(userId: string, projectId: string, raw: unknown, now = new Date()) {
   const input = shareSchema.parse(raw);
   const access = await requireProjectAccess(userId, projectId, "report:share");
+  if (!(await isFeatureEnabled("reports", access.organizationId))) throw new AppError("FEATURE_DISABLED", "Report sharing is turned off on this deployment.");
   await assertFeature(access.organizationId, "reports");
   const token = randomBytes(32).toString("base64url");
   const branding: ReportBranding = { ...(input.agencyName ? { agencyName: input.agencyName } : {}), ...(input.accentColor ? { accentColor: input.accentColor.toLowerCase() } : {}) };
@@ -72,6 +74,7 @@ export async function listShareLinks(userId: string, projectId: string) {
   const now = Date.now();
   return {
     entitled: await hasFeature(access.organizationId, "reports"),
+    enabled: await isFeatureEnabled("reports", access.organizationId),
     links: links.map((l) => ({ ...l, branding: l.branding as ReportBranding, status: l.revokedAt ? ("REVOKED" as const) : l.expiresAt && l.expiresAt.getTime() <= now ? ("EXPIRED" as const) : ("ACTIVE" as const) })),
   };
 }
@@ -97,6 +100,8 @@ export async function resolveShare(token: string, now = new Date()): Promise<Sha
   if (!share) return { ok: false, reason: "NOT_FOUND" };
   if (share.revokedAt) return { ok: false, reason: "REVOKED" };
   if (share.expiresAt && share.expiresAt <= now) return { ok: false, reason: "EXPIRED" };
+  // The flag works as an off switch for all public report links.
+  if (!(await isFeatureEnabled("reports", share.project.organizationId))) return { ok: false, reason: "PLAN" };
   // A downgraded organization's links pause (they resume if the plan is restored).
   if (!(await hasFeature(share.project.organizationId, "reports"))) return { ok: false, reason: "PLAN" };
   const range = parseDateRange(share.range);

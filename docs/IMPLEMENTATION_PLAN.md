@@ -1,6 +1,6 @@
 # AI Search Visibility (GEO) Platform — Implementation Plan
 
-Status: **Phase 8 complete** — Phase 9 next · Last updated: 2026-10-23
+Status: **Phase 9 complete** — V1 feature-complete; live provider and Stripe verification pending real keys · Last updated: 2026-10-23
 
 This document is the agreed architecture and phased build plan. It is the
 source of truth for structure decisions; update it when a decision changes.
@@ -368,11 +368,38 @@ snapshots remain explainable.
 
 ## 12. Definition of Done (V1)
 
-See product brief §32 — a real user can sign up, onboard a website, review
-competitors and prompts, run a scan processed by background workers, see
-mentions/citations/visibility, receive opportunities and recommendations,
-mark actions implemented and see observed before/after change, within
-enforced plan limits and paid subscriptions, with strict organization isolation.
+Product brief §32, item by item. "Tests" lists the automated coverage; every item was also exercised in a browser against local stand-in engines.
+
+| # | A real user can… | Where | Tests |
+| --- | --- | --- | --- |
+| 1 | Create an account | `/sign-up`, Auth.js credentials/OAuth | `credentials` |
+| 2 | Create an organization | personal org on sign-up, `/orgs/new` | `authorization` |
+| 3 | Enter a website | `/[org]/onboarding` (also prefilled from `/audit`) | `onboarding`, `public-audit` |
+| 4 | Have the website analyzed | SSRF-safe crawler + AI extraction (deterministic fallback) | crawler unit tests, `onboarding` |
+| 5 | Review the brand | onboarding brand step | `onboarding` |
+| 6 | Review competitors | onboarding competitors step | `onboarding` |
+| 7 | Review prompts | onboarding prompts step (30 generated) | `onboarding` |
+| 8 | Approve prompts | prompts step → `approvedAt` | `onboarding` |
+| 9 | Run a scan | project overview "Run scan" | `scan-pipeline` |
+| 10 | Have it processed by workers | BullMQ dispatch/query/analyze workers | `scan-pipeline` |
+| 11 | See scan history | project scans list, `/scans/[id]` | `scan-pipeline`, `dashboard` |
+| 12 | See brand mentions | prompt detail | `analysis` |
+| 13 | See citations | Citations page | `analysis`, `dashboard` |
+| 14 | See a visibility score | Overview, Competitors | scoring unit tests, `dashboard` |
+| 15 | See the dashboard | Overview | `dashboard` |
+| 16 | See losing prompts | Prompts (status filter), report | `dashboard`, `reports` |
+| 17 | See citation gaps | Citations, Opportunities | `opportunities` |
+| 18 | See opportunities | Opportunities | `opportunities` |
+| 19 | See recommendations | Actions, recommendation detail (Growth+) | recommendation unit tests (≥10), `opportunities` |
+| 20 | Mark an action implemented | recommendation detail | `opportunities` |
+| 21 | See before/after (observed change) | recommendation detail, Actions, report | `opportunities` |
+| 22 | Be held to usage limits | server-side in every service | `billing-limits` |
+| 23 | Pay for a subscription | `/[org]/billing`, Stripe Checkout/Portal/webhooks | `stripe` (stripe-mock) |
+| 24 | Have their data isolated from other organizations | `requireOrgAccess`/`requireProjectAccess` everywhere | `authorization` + isolation cases in each suite |
+| 25 | Share a read-only report | `/[org]/p/[id]/reports`, `/r/[token]` (Agency) | `reports` |
+
+Not verified here: real OpenAI/Gemini/Perplexity answers and a real Stripe
+test-mode account (no keys in this environment) — see PROVIDERS.md and BILLING.md.
 
 ---
 
@@ -547,3 +574,44 @@ Plans, server-side limits, Stripe Checkout, Billing Portal and webhooks, the bil
 - **Migration:** `stripe_events`.
 
 Verified against stripe-mock (unit and integration tests, plus a browser run covering Checkout redirect, signed webhook and replay). **Not yet run against a real Stripe test-mode account** (no key here); see the checklist in BILLING.md.
+
+## 20. Phase 9 notes (as built)
+
+**Reports.** `buildProjectReport` assembles visibility, trend, competitor comparison, top winning and losing prompts, citation gaps, top opportunities and completed actions (observed before/after, labelled as observation, not proof).
+- Share links (Agency plan, `report:share`): 256-bit random tokens, stored only as SHA-256. Shown once; optional expiry (7/30/90 days or never); revocable.
+- Links pause if the plan lapses and resume if it's restored. View count and last view are recorded.
+- `/r/[token]` is public, read-only, `noindex`, `no-referrer` and rate-limited per IP.
+- White-label prep: `ReportShare.branding` (`agencyName`, `accentColor`) is rendered as "Prepared by …"; custom domains and logos can build on it later. Migration: `report_shares`.
+
+**Free audit (`/audit`).** An acquisition funnel that runs a small real analysis:
+- crawl ≤3 pages;
+- brand and competitors via the onboarding model, or a guarded headline-based category fallback;
+- 5 commercial-intent prompts on one engine (OpenAI preferred, else Perplexity, then Gemini);
+- the same `analyzeResponse` and scoring as scans.
+
+The page shows the score, the competitor comparison and the questions asked. The teaser shows counts only: lost prompts, citation opportunities, recommended actions (counted with the real recommendation templates). The lists themselves stay server-side.
+- **Abuse and cost protection:**
+  - feature flag and kill switch;
+  - honeypot field;
+  - HMAC form token (≥2 s fill time, ≤2 h age);
+  - per-IP 3/hour and 10/day, counted in the DB on salted IP hashes (raw IPs are never stored), plus an in-process burst guard;
+  - global `PUBLIC_AUDIT_DAILY_CAP` (default 50);
+  - 24 h per-domain reuse (repeat requests cost nothing);
+  - its own `public-audit` queue (concurrency 2, no retries) so anonymous traffic never delays customer scans.
+- **Conversion:** "Create free account" → `/sign-up?audit=<id>` → `/audit/<id>/continue`, which records `convertedTo` and opens onboarding with the domain and market prefilled. Conversions are counted in admin.
+- **Cost:** engine cost is stored on the audit (`result.costUsd`) and shown in admin. Audit queries don't count against provider daily caps; they're bounded by the global cap (≤5 queries each).
+
+**Admin (`/admin`).** Platform admins only (`User.isPlatformAdmin`, set from `PLATFORM_ADMIN_EMAILS`). Everyone else gets a 404.
+- **Overview:**
+  - the global scan kill switch, with a reason required to turn it on;
+  - counts;
+  - estimated AI cost over 30 days (scans, onboarding, audits; daily chart);
+  - provider usage, readiness and enable/disable;
+  - subscriptions by plan and status, with the effective tier;
+  - the audit funnel.
+- **Lists:** organizations, users, projects, scans (searchable, latest 50).
+- **Failed jobs:** query jobs (grouped by error code), failed scans and analyses, failed audits.
+- Demo data is excluded from usage and cost. All changes are audit-logged.
+
+**Polish.** A public landing page at `/` (signed-in users still go straight to their workspace), a shared public header and footer, and onboarding prefill (`?url=&country=`).
+
