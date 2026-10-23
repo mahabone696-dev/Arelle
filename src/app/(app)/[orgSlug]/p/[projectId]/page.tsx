@@ -116,6 +116,7 @@ export default async function OverviewPage({
               providers: preview.providers.map((pr) => ({
                 displayName: pr.displayName,
                 model: pr.model,
+                localized: pr.localized,
               })),
               unavailable: preview.unavailable
                 .filter((u) => u.reason !== "DISABLED")

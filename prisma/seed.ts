@@ -19,8 +19,11 @@ const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.
 // VERIFY against current provider pricing before launch — cost caps depend on these.
 const PROVIDERS = [
   { slug: "openai", displayName: "ChatGPT", enabled: true, models: [{ modelId: "gpt-4.1-mini", displayName: "GPT-4.1 mini", input: 0.4, output: 1.6, request: 0.025, isDefault: true }] },
-  { slug: "gemini", displayName: "Gemini", enabled: false, models: [] },
-  { slug: "perplexity", displayName: "Perplexity", enabled: false, models: [{ modelId: "sonar", displayName: "Sonar", input: 1, output: 1, request: 0.005, isDefault: true }] },
+  // Gemini 3.8 Flash: $0.75 / $3.75 per 1M through 2026-12-31 ($1.50 / $7.50 from 2027-01-01 — update then);
+  // Google Search grounding $14 per 1,000 executed search queries (5,000/month free, not counted here).
+  { slug: "gemini", displayName: "Gemini", enabled: false, models: [{ modelId: "gemini-3.8-flash", displayName: "Gemini 3.8 Flash", input: 0.75, output: 3.75, request: 0.014, isDefault: true }] },
+  // Perplexity Agent API, perplexity/sonar: $0.25 / $2.50 per 1M; web_search $0.0025 per invocation.
+  { slug: "perplexity", displayName: "Perplexity", enabled: false, models: [{ modelId: "perplexity/sonar", displayName: "Sonar", input: 0.25, output: 2.5, request: 0.0025, isDefault: true }] },
 ] as const;
 
 async function seedPlatform() {
@@ -43,9 +46,11 @@ async function seedPlatform() {
           requestCost: m.request,
           isDefault: m.isDefault,
         },
-        update: { inputCostPer1M: m.input, outputCostPer1M: m.output, requestCost: m.request },
+        update: { inputCostPer1M: m.input, outputCostPer1M: m.output, requestCost: m.request, isActive: true, isDefault: m.isDefault },
       });
     }
+    // Models no longer listed (e.g. the retired Sonar chat-completions "sonar") stay for history but are never used again.
+    await db.aIModel.updateMany({ where: { providerId: provider.id, modelId: { notIn: p.models.map((m) => m.modelId) } }, data: { isActive: false, isDefault: false } });
   }
   for (const [key, def] of Object.entries(FEATURE_FLAGS)) {
     await db.featureFlag.upsert({ where: { key }, create: { key, description: def.description }, update: { description: def.description } });

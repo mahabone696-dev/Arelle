@@ -38,7 +38,7 @@ export function defaultScanDeps(): ScanServiceDeps {
 }
 
 export interface ScanPreview extends ScanPlan {
-  providers: Array<{ slug: string; displayName: string; model: string }>;
+  providers: Array<{ slug: string; displayName: string; model: string; localized: boolean }>;
   unavailable: ProviderAvailability["unavailable"];
   killSwitch: boolean;
   blockedReason?: string;
@@ -70,7 +70,7 @@ export async function previewScan(userId: string, projectId: string, deps: ScanS
   else if (!prompts.length) blockedReason = "Approve at least one prompt first.";
   return {
     ...plan,
-    providers: availability.ready.map((p) => ({ slug: p.slug, displayName: p.displayName, model: p.modelId })),
+    providers: availability.ready.map((p) => ({ slug: p.slug, displayName: p.displayName, model: p.modelId, localized: p.adapter.capabilities.location })),
     unavailable: availability.unavailable,
     killSwitch: kill.enabled,
     blockedReason,

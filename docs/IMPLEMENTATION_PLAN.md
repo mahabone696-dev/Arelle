@@ -1,6 +1,6 @@
 # AI Search Visibility (GEO) Platform — Implementation Plan
 
-Status: **Phase 6 complete** — Phase 7 next · Last updated: 2026-10-23
+Status: **Phase 7 complete** — Phase 8 next · Last updated: 2026-10-23
 
 This document is the agreed architecture and phased build plan. It is the
 source of truth for structure decisions; update it when a decision changes.
@@ -514,3 +514,21 @@ mention 0.6 · position 0.75 · SoV 0.24 · citation 0.3 · sentiment 0.6 → 10
 **Demo seed**: each weekly demo scan is evaluated as of its date. In week 4 the top recommendation is implemented, so later scans show an observed before/after. The demo crawl pages are labelled `[DEMO]`.
 
 **Migration**: `action_engine` (opportunity lifecycle timestamps, unique keys, action scope and baseline sample size, measurement sample size, append-only trigger, measurement→scan FK set to CASCADE).
+
+**Phase 6 review fixes**:
+- `plan` and `implement` lock the recommendation row, so concurrent clicks create exactly one action.
+- Opportunities for prompts that are no longer tracked are hidden.
+
+## 18. Phase 7 notes (as built)
+
+The Gemini (Interactions API + Google Search grounding) and Perplexity (Agent API, pinned to `perplexity/sonar`) adapters are behind the same `AIAnswerProvider` interface. Shared HTTP and citation helpers are in `providers/http.ts`.
+
+The provider differences are documented in [PROVIDERS.md](PROVIDERS.md):
+- Gemini can't be localized by country. The UI says so on the scan confirmation and on each answer card.
+- Gemini's redirect citations are resolved to real URLs.
+- Perplexity uses `[n]` / `[web:n]` markers, maps them to search results, and reports its own billed cost.
+- Search is billed per query for Gemini and per invocation for Perplexity.
+
+The seed has current pricing; the retired `sonar` chat-completions model is deactivated. `pnpm scan:smoke` runs every ready engine.
+
+Verified end to end against local stand-ins (documented response formats), through queue, worker, analysis, opportunities and dashboards. **Not verified against the live APIs** (no keys here).

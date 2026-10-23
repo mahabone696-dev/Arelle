@@ -17,6 +17,7 @@ The app is two processes plus two managed services:
 2. In Render: **New → Blueprint**, connect the GitHub repo, choose the branch above, and confirm.
 3. When prompted, fill in the secrets:
    - `OPENAI_API_KEY` — asked for twice (web and worker); use the same key.
+   - `GEMINI_API_KEY`, `PERPLEXITY_API_KEY` — optional, also asked for twice. To turn an engine on, also set `FEATURE_GEMINI` / `FEATURE_PERPLEXITY` to `"true"` in the `arelle-shared` group and run `pnpm admin provider enable gemini|perplexity` (Render Shell). See [PROVIDERS.md](PROVIDERS.md).
    - `SIGNUP_ALLOWLIST` — e.g. `you@company.com` or `@company.com`. **Keep this set** on a public URL, otherwise anyone can sign up and spend your OpenAI credit.
    - `PLATFORM_ADMIN_EMAILS` — your email (optional).
 4. Wait for the first deploy. The web service runs migrations and seeds providers/model pricing on start, then serves `https://arelle-web-xxxx.onrender.com`.

@@ -177,6 +177,9 @@ export default async function PromptDetailPage({
                       {a.response.provider.displayName}
                       <span className="tabular text-xs font-normal text-muted-foreground">{a.createdAt.toISOString().slice(0, 10)}</span>
                     </CardTitle>
+                    {(a.response.metadata as { locationSupported?: boolean } | null)?.locationSupported === false ? (
+                      <CardDescription>Not localized: {a.response.provider.displayName} can&apos;t be set to {countryName(d.prompt.country)}.</CardDescription>
+                    ) : null}
                   </CardHeader>
                   <CardContent className="grid flex-1 content-start gap-3 text-[13px]">
                     <div className="flex flex-wrap gap-1.5">

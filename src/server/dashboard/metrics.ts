@@ -173,7 +173,7 @@ export async function getPromptDetail(userId: string, projectId: string, promptI
   const latest = latestPerProvider(current);
   const texts = await db.aIResponse.findMany({
     where: { id: { in: latest.map((a) => a.responseId) } },
-    select: { id: true, normalizedText: true, model: true, createdAt: true, provider: { select: { displayName: true, slug: true } } },
+    select: { id: true, normalizedText: true, model: true, createdAt: true, metadata: true, provider: { select: { displayName: true, slug: true } } },
   });
   const textById = new Map(texts.map((t) => [t.id, t]));
   const competitorName = (id: string) => ctx.competitors.find((c) => c.id === id)?.name ?? "A competitor";

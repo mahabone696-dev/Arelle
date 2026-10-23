@@ -9,6 +9,8 @@ import { db } from "@/server/db";
 import { isFeatureEnabled } from "@/server/flags/flags";
 import { logger } from "@/lib/logger";
 import { OpenAIProvider } from "./openai";
+import { GeminiProvider } from "./gemini";
+import { PerplexityProvider } from "./perplexity";
 import type { AIAnswerProvider } from "./types";
 
 export type UnavailableReason =
@@ -52,6 +54,8 @@ type Factory = (model: string, pricing: Pricing, env: NodeJS.ProcessEnv) => AIAn
 /** Model id each provider queries, from env. Null = provider not configured. */
 function configuredModel(slug: string, env: NodeJS.ProcessEnv): string | null {
   if (slug === "openai") return env.OPENAI_API_KEY ? env.OPENAI_SCAN_MODEL || "gpt-4.1-mini" : null;
+  if (slug === "gemini") return env.GEMINI_API_KEY ? env.GEMINI_SCAN_MODEL || "gemini-3.8-flash" : null;
+  if (slug === "perplexity") return env.PERPLEXITY_API_KEY ? env.PERPLEXITY_SCAN_MODEL || "perplexity/sonar" : null;
   return null;
 }
 
@@ -64,7 +68,22 @@ const FACTORIES: Record<string, Factory> = {
       webSearch: env.OPENAI_SCAN_WEB_SEARCH !== "false",
       baseURL: env.OPENAI_BASE_URL || undefined,
     }),
-  // Phase 7: gemini, perplexity.
+  gemini: (model, pricing, env) =>
+    new GeminiProvider({
+      apiKey: env.GEMINI_API_KEY!,
+      model,
+      pricing,
+      thinkingLevel: (["minimal", "low", "medium", "high"] as const).find((l) => l === env.GEMINI_SCAN_THINKING) ?? "low",
+      baseURL: env.GEMINI_BASE_URL || undefined,
+    }),
+  perplexity: (model, pricing, env) =>
+    new PerplexityProvider({
+      apiKey: env.PERPLEXITY_API_KEY!,
+      model,
+      pricing,
+      maxToolCalls: Number(env.PERPLEXITY_SCAN_MAX_SEARCHES) > 0 ? Number(env.PERPLEXITY_SCAN_MAX_SEARCHES) : 2,
+      baseURL: env.PERPLEXITY_BASE_URL || undefined,
+    }),
 };
 
 /** Providers that have an adapter in this build (workers start one queue consumer per slug). */

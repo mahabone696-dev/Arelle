@@ -1,11 +1,13 @@
 /**
- * Real end-to-end scan: project → 5 prompts → scan → worker → OpenAI → DB.
+ * Real end-to-end scan: project → 5 prompts → scan → worker → every configured engine → DB.
  *
  *   pnpm scan:smoke --yes                 # runs the worker in-process
  *   pnpm scan:smoke --yes --external      # expects `pnpm worker:dev` running separately
  *
- * Requires DATABASE_URL, REDIS_URL, OPENAI_API_KEY (and `pnpm db:seed` for model pricing).
- * Spends real money: 5 OpenAI queries with web search (≈ $0.15 at seeded prices).
+ * Requires DATABASE_URL, REDIS_URL, at least one of OPENAI_API_KEY / GEMINI_API_KEY /
+ * PERPLEXITY_API_KEY (Gemini and Perplexity also need FEATURE_GEMINI / FEATURE_PERPLEXITY and
+ * `pnpm admin provider enable <slug>`), and `pnpm db:seed` for model pricing.
+ * Spends real money: 5 grounded queries per ready engine (the plan below prints the estimate).
  * Uses the same admission path as the UI: kill switch, caps and plan limits all apply.
  */
 import "dotenv/config";
@@ -26,8 +28,9 @@ function fail(msg: string): never {
 }
 
 async function main() {
-  for (const k of ["DATABASE_URL", "REDIS_URL", "OPENAI_API_KEY"]) if (!process.env[k]) fail(`${k} is not set.`);
-  if (!args.has("--yes")) fail("This makes 5 paid OpenAI requests. Re-run with --yes to confirm.");
+  for (const k of ["DATABASE_URL", "REDIS_URL"]) if (!process.env[k]) fail(`${k} is not set.`);
+  if (!["OPENAI_API_KEY", "GEMINI_API_KEY", "PERPLEXITY_API_KEY"].some((k) => process.env[k])) fail("No provider key is set (OPENAI_API_KEY, GEMINI_API_KEY or PERPLEXITY_API_KEY).");
+  if (!args.has("--yes")) fail("This makes 5 paid requests per ready engine. Re-run with --yes to confirm.");
   if ((await getScanKillSwitch()).enabled) fail("The scan kill switch is ON (pnpm admin kill-switch off).");
 
   // 1. Test tenant (clearly labelled), project and 5 approved prompts.
@@ -82,11 +85,16 @@ async function main() {
   for (const j of jobs) {
     const r = j.response;
     const cites = ((r?.metadata as { citations?: unknown[] } | undefined)?.citations ?? []).length;
-    console.log(`\n• ${j.prompt.text}\n  ${j.status} · attempts ${j.attempts}${r ? ` · ${r.model} · ${r.latencyMs}ms · ${r.inputTokens}/${r.outputTokens} tokens · $${Number(r.estimatedCost).toFixed(4)} · ${cites} citations` : ` · ${j.errorCode}: ${j.lastError}`}`);
+    console.log(`\n• [${j.provider.displayName}] ${j.prompt.text}\n  ${j.status} · attempts ${j.attempts}${r ? ` · ${r.model} · ${r.latencyMs}ms · ${r.inputTokens}/${r.outputTokens} tokens · $${Number(r.estimatedCost).toFixed(4)} · ${cites} citations` : ` · ${j.errorCode}: ${j.lastError}`}`);
     if (r) console.log(`  “${r.normalizedText.slice(0, 160).replace(/\n/g, " ")}…”`);
   }
-  const stored = await db.aIResponse.count({ where: { scanId: scan.id } });
-  console.log(`\nAIResponse rows stored for this scan: ${stored}`);
+  const stored = await db.aIResponse.groupBy({ by: ["providerId"], where: { scanId: scan.id }, _count: true });
+  console.log(`\nAIResponse rows stored for this scan: ${stored.reduce((n, g) => n + g._count, 0)}`);
+  for (const j of jobs.filter((j, i, all) => all.findIndex((x) => x.provider.displayName === j.provider.displayName) === i)) {
+    const mine = jobs.filter((x) => x.provider.displayName === j.provider.displayName);
+    const meta = mine.find((x) => x.response)?.response?.metadata as Record<string, unknown> | undefined;
+    console.log(`  ${j.provider.displayName}: ${mine.filter((x) => x.response).length}/${mine.length} answers · localized=${meta?.locationSupported !== false} · ${JSON.stringify(meta?.citationResolution ?? meta?.citationSource ?? null)}`);
+  }
   if (final.status === "FAILED") process.exitCode = 1;
 }
 

@@ -13,7 +13,7 @@ export interface ScanPreviewData {
   providerCount: number;
   expectedQueryCount: number;
   estimatedCost: number;
-  providers: Array<{ displayName: string; model: string }>;
+  providers: Array<{ displayName: string; model: string; localized: boolean }>;
   unavailable: Array<{ displayName: string; label: string }>;
   blockedReason?: string;
 }
@@ -141,6 +141,15 @@ export function ScanControl({
             <div className="mt-1 text-muted-foreground">
               {preview.providers.map((p) => `${p.displayName} (${p.model})`).join(", ")} · estimated {formatUsd(preview.estimatedCost)}
             </div>
+            {preview.providers.some((p) => !p.localized) ? (
+              <div className="mt-1 text-xs text-muted-foreground">
+                {preview.providers
+                  .filter((p) => !p.localized)
+                  .map((p) => p.displayName)
+                  .join(", ")}{" "}
+                can&apos;t be set to a country, so its answers aren&apos;t localized to your market.
+              </div>
+            ) : null}
             {preview.unavailable.length ? <div className="mt-1 text-xs text-muted-foreground">Not included: {preview.unavailable.map((u) => `${u.displayName} — ${u.label}`).join("; ")}</div> : null}
           </div>
           <div className="flex gap-2">
