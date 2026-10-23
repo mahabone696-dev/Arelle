@@ -84,10 +84,17 @@ async function ensureCustomer(stripe: Stripe, organizationId: string, email: str
     where: { organizationId },
     select: { stripeCustomerId: true, organization: { select: { name: true } } },
   });
-  if (sub.stripeCustomerId) return sub.stripeCustomerId;
+  if (sub.stripeCustomerId) {
+    // A customer deleted in the Stripe dashboard would otherwise break Checkout for good.
+    const existing = await stripe.customers.retrieve(sub.stripeCustomerId).catch((e: { code?: string }) => (e?.code === "resource_missing" ? null : Promise.reject(e)));
+    if (existing && !("deleted" in existing && existing.deleted)) return sub.stripeCustomerId;
+    log.warn("billing.customer_missing_recreating", { organizationId, customerId: sub.stripeCustomerId });
+    await db.subscription.update({ where: { organizationId }, data: { stripeCustomerId: null } });
+  }
   const customer = await stripe.customers.create(
     { name: sub.organization.name, ...(email ? { email } : {}), metadata: { organizationId } },
-    { idempotencyKey: `customer:${organizationId}` },
+    // Day-scoped key: concurrent clicks share one customer; a re-creation tomorrow isn't blocked by Stripe's 24 h key cache.
+    { idempotencyKey: `customer:${organizationId}:${new Date().toISOString().slice(0, 10)}` },
   );
   // Only the first writer stores its id; a concurrent request reuses it.
   await db.subscription.updateMany({
@@ -222,6 +229,11 @@ export async function syncSubscription(
       current: row.stripeSubscriptionId,
     });
     return row;
+  }
+  // Two live subscriptions (e.g. Checkout paid in two tabs) means double billing: the newer one wins here, and it's flagged for a refund.
+  if (row.stripeSubscriptionId && row.stripeSubscriptionId !== sub.id && effectiveTier(row) !== "FREE" && effectiveTier({ planTier: mapped.data.planTier, status: mapped.data.status }) !== "FREE") {
+    log.error("billing.multiple_active_subscriptions", { organizationId: row.organizationId, previous: row.stripeSubscriptionId, current: sub.id });
+    await writeAuditLog({ organizationId: row.organizationId, action: "billing.multiple_active_subscriptions", entityType: "Subscription", entityId: row.id, metadata: { previous: row.stripeSubscriptionId, current: sub.id } });
   }
   const updated = await db.subscription.update({ where: { id: row.id }, data: mapped.data });
   if (row.planTier !== updated.planTier || row.status !== updated.status) {
