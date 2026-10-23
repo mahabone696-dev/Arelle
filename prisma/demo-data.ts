@@ -8,6 +8,7 @@
  */
 import type { PrismaClient } from "../src/generated/prisma/client";
 import { analyzeScan } from "../src/server/analysis/service";
+import { evaluateProject, implementRecommendation, measureActionsForScan, planRecommendation } from "../src/server/opportunities/service";
 
 const WEEKS = 8;
 const SOURCES = [
@@ -28,6 +29,14 @@ function prng(seed: number) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+
+const DEMO_PAGES = [
+  { url: "https://demo-crm.example/", title: "[DEMO] Northwind CRM — the CRM for small teams", h1: ["The CRM small teams actually use"], wordCount: 640 },
+  { url: "https://demo-crm.example/pricing", title: "[DEMO] Pricing — Northwind CRM", h1: ["Simple CRM pricing"], wordCount: 420 },
+  { url: "https://demo-crm.example/features/pipeline", title: "[DEMO] Pipeline management — Northwind CRM", h1: ["Visual CRM pipelines"], wordCount: 880 },
+  { url: "https://demo-crm.example/small-business-crm", title: "[DEMO] CRM for small companies — Northwind CRM", h1: ["An affordable CRM for small companies"], wordCount: 910 },
+  { url: "https://demo-crm.example/blog/remote-sales-teams", title: "[DEMO] Managing remote sales teams", h1: ["How to manage a remote sales team"], wordCount: 1500 },
+];
 
 const PRAISE = ["easy to use and affordable", "reliable with strong pipeline views", "a popular, powerful option", "intuitive for small teams"];
 const MIXED = ["capable, though it can be expensive as you grow", "flexible but has a steep learning curve", "solid, but reporting is limited"];
@@ -62,6 +71,23 @@ export async function seedDemoScans(db: PrismaClient, projectId: string): Promis
   const providers = await db.aIProvider.findMany({ where: { slug: { in: ["openai", "gemini", "perplexity"] } }, include: { models: { where: { isDefault: true }, take: 1 } } });
   const brand = project.brand?.name ?? "Northwind CRM";
   const competitors = project.competitors.map((c) => c.name);
+  // A labelled demo crawl so page matching (update vs create) has something to work with.
+  if (!(await db.websiteAnalysis.count({ where: { projectId } }))) {
+    await db.websiteAnalysis.create({
+      data: {
+        projectId,
+        status: "COMPLETED",
+        method: "DETERMINISTIC",
+        requestedUrl: "https://demo-crm.example/",
+        homepageUrl: "https://demo-crm.example/",
+        site: "demo-crm.example",
+        pagesCrawled: DEMO_PAGES.length,
+        pages: DEMO_PAGES,
+        completedAt: new Date(Date.now() - WEEKS * 7 * 86_400_000),
+      },
+    });
+  }
+  const ownerId = (await db.organizationMember.findFirst({ where: { organization: { projects: { some: { id: projectId } } }, role: "OWNER" }, select: { userId: true } }))?.userId;
   const rand = prng(20261023);
   const now = Date.now();
 
@@ -102,6 +128,21 @@ export async function seedDemoScans(db: PrismaClient, projectId: string): Promis
       }
     }
     await analyzeScan(scan.id, { llm: null, aiEnabled: async () => false });
+    await evaluateProject(projectId, { scanId: scan.id, asOf: scan.completedAt! });
+    await measureActionsForScan(scan.id);
+    // Week 4: the demo team ships the top recommendation, so later scans show an observed before/after.
+    if (week === 3 && ownerId) await implementTopRecommendation(db, projectId, ownerId, new Date(scan.completedAt!.getTime() + 2 * 86_400_000));
   }
   console.log(`Seeded ${WEEKS} demo scans (${project.prompts.length} prompts × ${providers.length} engines each)`);
+}
+
+async function implementTopRecommendation(db: PrismaClient, projectId: string, userId: string, at: Date) {
+  const rec = await db.recommendation.findFirst({
+    where: { status: "OPEN", opportunity: { projectId, status: "OPEN", promptId: { not: null } } },
+    orderBy: [{ opportunity: { impactScore: "desc" } }, { createdAt: "asc" }],
+    select: { id: true, targetUrl: true },
+  });
+  if (!rec) return;
+  await planRecommendation(userId, projectId, rec.id);
+  await implementRecommendation(userId, projectId, rec.id, { implementedAt: at, implementationUrl: rec.targetUrl ?? "", notes: "[DEMO DATA] Published the page and linked it from the homepage." }, new Date(at.getTime() + 60_000));
 }

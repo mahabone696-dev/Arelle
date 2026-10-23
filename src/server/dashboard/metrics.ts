@@ -5,7 +5,7 @@
  */
 import { db } from "@/server/db";
 import { requireProjectAccess } from "@/server/auth/authorization";
-import { ANALYSIS_VERSION } from "@/server/analysis/analyze";
+import { loadProjectAnswers, type AnswerFilter } from "./answers";
 import { getProviderAvailability, UNAVAILABLE_LABELS } from "@/server/providers/registry";
 import { resolveWeights, scoreDelta, type VisibilityMetrics } from "@/server/scoring/visibility";
 import type { PromptIntent } from "@/generated/prisma/enums";
@@ -42,37 +42,11 @@ async function projectContext(userId: string, projectId: string) {
 
 type Ctx = Awaited<ReturnType<typeof projectContext>>;
 
-/** Analyzed answers in [from, to). Demo answers only ever appear in demo workspaces. */
-async function loadAnswers(ctx: Ctx, from: Date, to: Date, where: { promptId?: string; providerId?: string } = {}): Promise<AnswerRow[]> {
-  const rows = await db.aIResponse.findMany({
-    where: { scan: { projectId: ctx.project.id }, isDemo: ctx.isDemo, createdAt: { gte: from, lt: to }, analyses: { some: { analysisVersion: ANALYSIS_VERSION } }, ...where },
-    select: {
-      id: true,
-      promptId: true,
-      providerId: true,
-      createdAt: true,
-      country: true,
-      language: true,
-      analyses: { where: { analysisVersion: ANALYSIS_VERSION }, select: { brandsMentionedCount: true } },
-      mentions: { where: { analysisVersion: ANALYSIS_VERSION }, select: { isPrimaryBrand: true, competitorId: true, brandName: true, position: true, sentiment: true, snippet: true } },
-      citations: { where: { analysisVersion: ANALYSIS_VERSION }, select: { ownerType: true, competitorId: true, domain: true, url: true, title: true, position: true } },
-    },
-    orderBy: { createdAt: "asc" },
-  });
-  return rows.map((r) => ({
-    responseId: r.id,
-    promptId: r.promptId,
-    providerId: r.providerId,
-    createdAt: r.createdAt,
-    country: r.country,
-    language: r.language,
-    brandsMentionedCount: r.analyses[0]!.brandsMentionedCount,
-    mentions: r.mentions,
-    citations: r.citations,
-  }));
+function loadAnswers(ctx: Ctx, from: Date, to: Date, where: AnswerFilter = {}): Promise<AnswerRow[]> {
+  return loadProjectAnswers(ctx.project.id, ctx.isDemo, from, to, where);
 }
 
-async function windowAnswers(ctx: Ctx, range: DateRangeKey, where: { promptId?: string; providerId?: string } = {}) {
+async function windowAnswers(ctx: Ctx, range: DateRangeKey, where: AnswerFilter = {}) {
   const w = resolveDateWindow(range);
   const [current, previous] = await Promise.all([loadAnswers(ctx, w.from, w.to, where), loadAnswers(ctx, w.previousFrom, w.previousTo, where)]);
   return { window: w, current, previous };
@@ -101,10 +75,9 @@ function withDeltas(current: VisibilityMetrics, previous: VisibilityMetrics | nu
 export async function getOverview(userId: string, projectId: string, range: DateRangeKey) {
   const ctx = await projectContext(userId, projectId);
   const { current, previous } = await windowAnswers(ctx, range);
-  const [providers, availability, prompts, lastScan] = await Promise.all([
+  const [providers, availability, lastScan] = await Promise.all([
     db.aIProvider.findMany({ select: { id: true, slug: true, displayName: true }, orderBy: { createdAt: "asc" } }),
     getProviderAvailability(),
-    db.prompt.findMany({ where: { projectId, isActive: true }, select: { id: true, text: true, intent: true, priority: true } }),
     db.scan.findFirst({ where: { projectId, analysisStatus: "COMPLETED" }, orderBy: { completedAt: "desc" }, select: { completedAt: true } }),
   ]);
   const w = ctx.weights;
@@ -129,12 +102,6 @@ export async function getOverview(userId: string, projectId: string, range: Date
     .map((s) => ({ ...s, metrics: subjectMetrics(current, s.id, w) }))
     .sort((a, b) => b.metrics.visibilityScore - a.metrics.visibilityScore);
   const series = dailySeries(current, subjects(ctx).slice(0, 6).map((s) => s.id), w);
-  const promptById = new Map(prompts.map((p) => [p.id, p]));
-  const losing = promptRows(prompts.map((p) => p.id), current, [], ctx.competitors.map((c) => c.id), w)
-    .filter((r) => r.status === "LOSING")
-    .map((r) => ({ ...r, prompt: promptById.get(r.promptId)!, competitor: ctx.competitors.find((c) => c.id === r.bestCompetitor?.competitorId)?.name ?? null }))
-    .sort((a, b) => b.prompt.priority - a.prompt.priority || (b.bestCompetitor?.visibility ?? 0) - (a.bestCompetitor?.visibility ?? 0))
-    .slice(0, 5);
   return {
     brandName: ctx.brandName,
     answers: current.length,
@@ -144,7 +111,6 @@ export async function getOverview(userId: string, projectId: string, range: Date
     competitorTable,
     series,
     seriesSubjects: subjects(ctx).slice(0, 6),
-    losing,
     lastAnalyzedAt: lastScan?.completedAt ?? null,
     weightsVersion: w.version,
   };

@@ -12,6 +12,8 @@ import { Delta, num1 } from "@/components/dashboard/delta";
 import { PROMPT_STATUSES, PromptStatusBadge, statusLabel } from "@/components/dashboard/prompt-status";
 import { getProjectPage } from "@/server/auth/session";
 import { getPromptsTable, type PromptFilters } from "@/server/dashboard/metrics";
+import { promptOpportunities } from "@/server/opportunities/service";
+import { ImpactBadge, OPPORTUNITY_LABELS } from "@/components/actions/labels";
 import type { PromptStatus } from "@/server/dashboard/aggregate";
 import { INTENT_LABELS, PROMPT_INTENTS } from "@/lib/prompt-intents";
 import { parseDateRange } from "@/lib/date-range";
@@ -42,7 +44,7 @@ export default async function PromptsPage({
     country: country || undefined,
     language: language || undefined,
   };
-  const { rows, providers, allProviders, markets } = await getPromptsTable(user.id, projectId, range, filters);
+  const [{ rows, providers, allProviders, markets }, opps] = await Promise.all([getPromptsTable(user.id, projectId, range, filters), promptOpportunities(user.id, projectId)]);
   const base = `/${orgSlug}/p/${projectId}`;
   const filtered = Object.values(filters).some(Boolean);
   const edit = (
@@ -122,7 +124,8 @@ export default async function PromptsPage({
                   </th>
                 ))}
                 <th className="px-3 py-2.5 text-right font-medium">Trend</th>
-                <th className="px-4 py-2.5 font-medium">Status</th>
+                <th className="px-3 py-2.5 font-medium">Status</th>
+                <th className="px-4 py-2.5 font-medium">Opportunity</th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -156,8 +159,18 @@ export default async function PromptsPage({
                     </td>
                   ))}
                   <td className="px-3 py-2.5 text-right">{r.answers ? <Delta value={r.trend} /> : <span className="text-xs text-muted-foreground">—</span>}</td>
-                  <td className="px-4 py-2.5">
+                  <td className="px-3 py-2.5">
                     <PromptStatusBadge status={r.status} />
+                  </td>
+                  <td className="px-4 py-2.5">
+                    {opps.get(r.id) ? (
+                      <Link href={`${base}/opportunities`} className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground hover:text-foreground" title={OPPORTUNITY_LABELS[opps.get(r.id)!.type]}>
+                        <ImpactBadge score={opps.get(r.id)!.impactScore} />
+                        {OPPORTUNITY_LABELS[opps.get(r.id)!.type]}
+                      </Link>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
                   </td>
                 </tr>
               ))}

@@ -1,6 +1,6 @@
 # AI Search Visibility (GEO) Platform — Implementation Plan
 
-Status: **Phase 5 complete** — Phase 6 next · Last updated: 2026-10-23
+Status: **Phase 6 complete** — Phase 7 next · Last updated: 2026-10-23
 
 This document is the agreed architecture and phased build plan. It is the
 source of truth for structure decisions; update it when a decision changes.
@@ -452,3 +452,65 @@ mention 0.6 · position 0.75 · SoV 0.24 · citation 0.3 · sentiment 0.6 → 10
 **Charts** (Recharts): fixed categorical order `--series-1..6`, validated for light and dark. Slot 1 is always your brand, and competitors keep their slot across pages. One y-axis fixed at 0–100. A legend is always shown, plus a table view.
 
 **Demo data** (`prisma/demo-data.ts`, non-production seed only): 8 weekly scans × prompts × 3 engines generated with a fixed-seed PRNG. Every answer is prefixed `[DEMO DATA]` and flagged `isDemo`, and all of it goes through the real analysis and snapshot code.
+
+**Phase 5 review fix**: demo workspaces now refuse real scans (preview and server-side), since their dashboards only show demo data. A real scan there would cost money and its results would never be shown.
+
+## 17. Phase 6 notes (as built)
+
+**Opportunity engine** (`src/server/opportunities/rules.ts`, pure). It evaluates the last 30 days of analyzed answers after every analyzed scan (worker), or on demand with `pnpm admin opportunities <projectId>`.
+
+| Type | Fires when |
+| --- | --- |
+| LOST_PROMPT | you're absent from every engine's latest answer, a competitor is present, and you're absent from ≥ 50% of the window's answers (≥ 2 answers) |
+| POSITION_GAP | mentioned in ≥ 30% of answers but average position ≥ 2.5, or a competitor is listed above you in ≥ 60% of shared answers |
+| CONTENT_GAP | a commercial/transactional/comparison/alternative prompt with priority ≥ 4, not won, and no crawled page targeting it (supersedes a position gap on the same prompt) |
+| COMPETITOR_DOMINANCE | within one intent (≥ 2 prompts, ≥ 6 answers), a competitor's mention rate is ≥ 40%, ≥ 20 points above yours and ≥ 1.5× yours. Prompts that name the competitor ("HubSpot alternatives") are excluded for it |
+| CITATION_GAP | a third-party domain with gap score ≥ 35 (Phase 5 formula), cited in ≥ 3 answers, and ≤ 50% of them mention you |
+
+*Impact score* (0–100) is a priority signal, never a forecast. Lost prompt: `100 × (0.25·priority + 0.25·intent + 0.2·engine coverage + 0.2·leader score + 0.1·citation strength)`. The other types use the same ingredients (see code). Intent weights: transactional 1, commercial/comparison 0.9, alternative 0.85, branded 0.7, informational 0.4. *Confidence* = n/(n+5); content gaps are capped at 0.7 because page matching is heuristic.
+
+*Page matching* (`pages.ts`): a page targets a prompt when ≥ 60% of the prompt's distinctive terms appear in its URL, title or H1. Category words found on most pages and filler words don't count. A prompt with no distinctive terms maps to the homepage.
+
+**Action engine** (`recommend.ts`, deterministic templates). Every recommendation has WHAT (title), WHY (numbers from the evidence), WHERE (an existing page, or a suggested URL for a new one), HOW (steps) and EXPECTED IMPACT (HIGH ≥ 65 > MEDIUM ≥ 40 > LOW):
+
+- *Lost prompt / content gap*:
+  - a matching page exists → UPDATE_CONTENT + ADD_FAQ
+  - comparison prompt → CREATE_COMPARISON_PAGE (`/compare/you-vs-x`)
+  - alternatives prompt → CREATE_COMPARISON_PAGE (`/alternatives/x`, with migration steps)
+  - branded → IMPROVE_ENTITY_CLARITY + ADD_SCHEMA
+  - informational → CREATE_CONTENT + INTERNAL_LINKING
+  - otherwise → CREATE_LANDING_PAGE + ADD_FAQ
+- *Position gap*: UPDATE_CONTENT + INTERNAL_LINKING.
+- *Dominance*: CREATE_COMPARISON_PAGE + DIGITAL_PR. Editorial sources only; review sites and communities get their own outreach.
+- *Citation gap*, by source kind:
+  - review sites → CITATION_OUTREACH (profile and honest reviews)
+  - communities → CITATION_OUTREACH (with disclosure)
+  - editorial → DIGITAL_PR
+  - video → CREATE_CONTENT
+  - encyclopedias → IMPROVE_ENTITY_CLARITY (no self-editing)
+- *Wording*: no promises. Tests reject "guarantee", "will rank" and similar phrasing.
+
+**Sync** (`service.ts`):
+- Opportunities are keyed by fingerprint (`TYPE:subject`), so repeated scans update rather than duplicate.
+- Dismissed opportunities stay dismissed. Opportunities no longer detected become RESOLVED ("No longer detected"), and come back to OPEN if detected again.
+- A window with no answers changes nothing.
+- Recommendations are unique per (opportunity, type). Only OPEN ones are rewritten.
+- The same page or outreach coming from several opportunities is attached only to the highest-impact one; the others record `coveredBy`.
+
+**Action tracking**: OPEN → PLANNED → IMPLEMENTED (date, URL, notes), or DISMISSED. Dismissing or reopening abandons a plan.
+- *At implementation*: the scope is fixed (the opportunity's prompt(s), or the whole project), and the baseline is the visibility over the 30 days before the date.
+- *After each analyzed scan*: an `ActionMeasurement` is stored (after-score over answers since implementation, at most 30 days, with sample size). Backdated implementations are backfilled from existing scans.
+- *History*: measurements are append-only (DB trigger) and unique per (action, scan).
+- *In the UI*: shown as "Observed change after implementation", with an explicit note that it isn't proof of cause.
+
+**UI**:
+- **Overview:** Top opportunities.
+- **Opportunities:** status tabs, type filter, evidence, dismiss/restore.
+- **Actions:** implemented with observed change / planned / recommended.
+- **Recommendation detail:** why/where/how/impact, plan/implement form, before/after table.
+- **Prompts table:** Opportunity column.
+- **Prompt detail:** recommended actions.
+
+**Demo seed**: each weekly demo scan is evaluated as of its date. In week 4 the top recommendation is implemented, so later scans show an observed before/after. The demo crawl pages are labelled `[DEMO]`.
+
+**Migration**: `action_engine` (opportunity lifecycle timestamps, unique keys, action scope and baseline sample size, measurement sample size, append-only trigger, measurement→scan FK set to CASCADE).

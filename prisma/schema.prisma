@@ -715,8 +715,12 @@ model Opportunity {
   impactScore     Float
   confidenceScore Float
   status          OpportunityStatus @default(OPEN)
-  // Stable hash of (type, subject) so repeated scans update rather than duplicate.
+  // Stable key of (type, subject) so repeated scans update rather than duplicate.
   fingerprint     String
+  // Last time the rules still detected it; RESOLVED when a later evaluation no longer does.
+  lastDetectedAt  DateTime          @default(now()) @db.Timestamptz(3)
+  resolvedAt      DateTime?         @db.Timestamptz(3)
+  dismissedAt     DateTime?         @db.Timestamptz(3)
   createdAt       DateTime          @default(now()) @db.Timestamptz(3)
   updatedAt       DateTime          @updatedAt @db.Timestamptz(3)
 
@@ -748,6 +752,7 @@ model Recommendation {
   opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
   actions     Action[]
 
+  @@unique([opportunityId, type])
   @@index([opportunityId])
 }
 
@@ -759,8 +764,11 @@ model Action {
   implementedAt     DateTime?    @db.Timestamptz(3)
   implementationUrl String?
   notes             String?      @db.Text
-  // Visibility score at implementation time (the "before").
+  // Visibility of the opportunity's scope (prompt or project) in the 30 days before implementation.
   baselineScore     Float?
+  baselineAnswers   Int?
+  // Prompts the before/after comparison covers, fixed at implementation (empty = whole project).
+  scopePromptIds    String[]     @default([])
   createdById       String?
   createdAt         DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt         DateTime     @updatedAt @db.Timestamptz(3)
@@ -782,10 +790,14 @@ model ActionMeasurement {
   beforeScore             Float
   afterScore              Float
   delta                   Float
+  // Answers the after-score is based on (sample size shown next to the change).
+  afterAnswers            Int
 
   action Action @relation(fields: [actionId], references: [id], onDelete: Cascade)
-  scan   Scan?  @relation(fields: [scanId], references: [id], onDelete: SetNull)
+  // Cascade (not SET NULL): measurements are append-only and reject UPDATEs.
+  scan   Scan?  @relation(fields: [scanId], references: [id], onDelete: Cascade)
 
+  @@unique([actionId, scanId])
   @@index([actionId, measuredAt])
 }
 

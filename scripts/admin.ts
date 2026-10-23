@@ -6,12 +6,14 @@
  *   pnpm admin provider status
  *   pnpm admin provider enable openai | disable openai
  *   pnpm admin analyze <scanId>                # (re)run response analysis + snapshots for a scan
+ *   pnpm admin opportunities <projectId>       # re-evaluate opportunities and recommendations now
  */
 import "dotenv/config";
 import { db } from "@/server/db";
 import { getScanKillSwitch, setScanKillSwitch } from "@/server/system/settings";
 import { getProviderAvailability, UNAVAILABLE_LABELS } from "@/server/providers/registry";
 import { analyzeScan } from "@/server/analysis/service";
+import { afterScanAnalyzed, evaluateProject } from "@/server/opportunities/service";
 
 const [area, action, arg] = process.argv.slice(2);
 const actor = process.env.USER ? `cli:${process.env.USER}` : "cli";
@@ -39,11 +41,19 @@ async function main() {
     // Re-running is safe: answers already analyzed at the current version are skipped.
     await db.scan.update({ where: { id: action }, data: { analysisStatus: null } });
     console.log("analysis:", await analyzeScan(action));
+    await afterScanAnalyzed(action);
     const snaps = await db.visibilitySnapshot.findMany({ where: { scanId: action, competitorId: null }, include: { provider: { select: { slug: true } } } });
     for (const s of snaps) console.log(`  ${s.provider?.slug ?? "all"} ${s.country}/${s.language}: score ${s.visibilityScore} · mention ${s.mentionRate} · SoV ${s.shareOfVoice} · avg pos ${s.averagePosition ?? "—"} · cited ${s.citationRate} · n=${s.sampleSize}`);
     return;
   }
-  throw new Error("usage: admin kill-switch|provider|analyze ...");
+  if (area === "opportunities") {
+    if (!action) throw new Error("usage: opportunities <projectId>");
+    console.log("opportunities:", (await evaluateProject(action)) ?? "no analyzed answers in the last 30 days");
+    const open = await db.opportunity.findMany({ where: { projectId: action, status: "OPEN" }, orderBy: { impactScore: "desc" }, select: { type: true, impactScore: true, title: true } });
+    for (const o of open) console.log(`  ${String(Math.round(o.impactScore)).padStart(3)}  ${o.type.padEnd(21)} ${o.title}`);
+    return;
+  }
+  throw new Error("usage: admin kill-switch|provider|analyze|opportunities ...");
 }
 
 main()

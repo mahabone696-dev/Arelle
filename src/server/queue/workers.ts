@@ -10,6 +10,7 @@ import { dispatchScan, sweepScans, type DispatchDeps, defaultDispatchDeps } from
 import { defaultExecuteDeps, executeScanJob, type ExecuteDeps } from "@/server/scans/execute";
 import { closeJob, finalizeScanIfDone, setScanFinalizedHook } from "@/server/scans/lifecycle";
 import { analyzeScan, defaultAnalysisDeps, type AnalysisDeps } from "@/server/analysis/service";
+import { afterScanAnalyzed } from "@/server/opportunities/service";
 import { redisQuotaGuard } from "@/server/scans/quota";
 import { scanConfigFromEnv } from "@/server/scans/config";
 import { IMPLEMENTED_PROVIDERS } from "@/server/providers/registry";
@@ -92,7 +93,18 @@ export async function startScanWorkers(options: WorkerOptions = {}): Promise<Run
   }
 
   const analysisDeps = options.analysisDeps ?? defaultAnalysisDeps();
-  workers.push(new Worker<AnalyzeJobData>(QUEUE_NAMES.analyze, async (job) => analyzeScan(job.data.scanId, analysisDeps), { connection: conn(), concurrency: 2 }));
+  workers.push(
+    new Worker<AnalyzeJobData>(
+      QUEUE_NAMES.analyze,
+      async (job) => {
+        const analysis = await analyzeScan(job.data.scanId, analysisDeps);
+        // Opportunities + action measurements are idempotent, so a retried job simply re-runs them.
+        const followUp = await afterScanAnalyzed(job.data.scanId);
+        return { analysis, followUp };
+      },
+      { connection: conn(), concurrency: 2 },
+    ),
+  );
   setScanFinalizedHook(async (scanId, status) => {
     if (status !== "FAILED") {
       await db.scan.updateMany({ where: { id: scanId, analysisStatus: null, completedCount: { gt: 0 } }, data: { analysisStatus: "PENDING" } });

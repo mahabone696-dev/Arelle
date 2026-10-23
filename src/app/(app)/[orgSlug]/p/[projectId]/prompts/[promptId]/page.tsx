@@ -10,6 +10,8 @@ import { Delta, num1, pct } from "@/components/dashboard/delta";
 import { PromptStatusBadge } from "@/components/dashboard/prompt-status";
 import { getProjectPage } from "@/server/auth/session";
 import { getPromptDetail } from "@/server/dashboard/metrics";
+import { recommendationsForPrompt } from "@/server/opportunities/service";
+import { ImpactBadge, RECOMMENDATION_LABELS, RecommendationStatusBadge } from "@/components/actions/labels";
 import { promptStatus } from "@/server/dashboard/aggregate";
 import { INTENT_LABELS } from "@/lib/prompt-intents";
 import { DATE_RANGES, parseDateRange } from "@/lib/date-range";
@@ -36,6 +38,7 @@ export default async function PromptDetailPage({
     if (isAppError(e)) notFound();
     throw e;
   });
+  const recs = await recommendationsForPrompt(user.id, projectId, promptId);
   const base = `/${orgSlug}/p/${projectId}`;
   const mentionedIn = d.latest.filter((a) => a.mentions.some((m) => m.isPrimaryBrand)).length;
   const status = promptStatus(d.latest);
@@ -109,8 +112,26 @@ export default async function PromptDetailPage({
                 ) : (
                   <p className="text-[13px] text-muted-foreground">Nothing stands out: {d.brandName} appears in these answers and is cited.</p>
                 )}
-                <div className="mt-4 rounded-md border border-dashed px-3 py-2.5 text-[13px] text-muted-foreground">
-                  <span className="font-medium text-foreground">Recommended actions</span> — concrete content and citation recommendations for this prompt arrive with the Action Engine (next phase).
+                <div className="mt-4 border-t pt-3">
+                  <h3 className="text-sm font-medium">Recommended actions</h3>
+                  {recs.length ? (
+                    <ul className="mt-1 divide-y text-[13px]">
+                      {recs.map((r) => (
+                        <li key={r.id}>
+                          <Link href={`${base}/actions/${r.id}`} className="grid gap-1 py-2 hover:text-foreground">
+                            <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                              <ImpactBadge level={r.estimatedImpact} />
+                              {RECOMMENDATION_LABELS[r.type]}
+                              {r.status !== "OPEN" ? <RecommendationStatusBadge status={r.status} /> : null}
+                            </span>
+                            <span className="font-medium">{r.title}</span>
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-1 text-[13px] text-muted-foreground">No recommendations for this prompt right now. They&apos;re generated after each scan when an opportunity is detected.</p>
+                  )}
                 </div>
               </CardContent>
             </Card>
