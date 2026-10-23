@@ -15,7 +15,7 @@ export function ReportView({ report: r, title, branding = {} }: { report: Projec
   const series = r.seriesSubjects.map((s, i) => ({ key: s.id ?? "primary", name: s.isPrimary ? `${s.name} (you)` : s.name, colorIndex: i, emphasis: s.isPrimary }));
   const accent = branding.accentColor ?? undefined;
   return (
-    <article className="mx-auto grid max-w-5xl gap-4 print:max-w-none">
+    <article className="mx-auto grid max-w-5xl gap-4 print:max-w-none [&>*]:min-w-0">
       <header className="grid gap-1 border-b pb-4" style={accent ? { borderColor: accent } : undefined}>
         {branding.agencyName ? <div className="text-xs font-medium uppercase tracking-wide" style={accent ? { color: accent } : undefined}>Prepared by {branding.agencyName}</div> : null}
         <h1 className="text-2xl font-semibold tracking-tight">{title || `AI visibility report — ${r.brandName}`}</h1>
@@ -29,7 +29,7 @@ export function ReportView({ report: r, title, branding = {} }: { report: Projec
         <Card className="px-5 py-8 text-center text-[13px] text-muted-foreground">No analyzed AI answers in this period yet.</Card>
       ) : (
         <>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5 [&>*]:min-w-0">
             <Card className="sm:col-span-2 lg:col-span-1">
               <CardHeader>
                 <CardTitle className="text-muted-foreground">AI Visibility</CardTitle>
