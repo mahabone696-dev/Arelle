@@ -27,6 +27,15 @@
   --input: oklch(0.9 0.004 265);
   --ring: oklch(0.55 0.17 262);
   --sidebar: oklch(0.982 0.002 265);
+  /* Chart series — validated categorical palette (fixed order; slot 1 is always your brand). */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --chart-grid: oklch(0.93 0.004 265);
+  --chart-axis: oklch(0.6 0.01 265);
 }
 
 @theme inline {

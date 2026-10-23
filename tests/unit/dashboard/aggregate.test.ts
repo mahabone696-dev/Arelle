@@ -30,6 +30,10 @@ describe("promptStatus", () => {
     expect(promptStatus([old, newer])).toBe("LOSING");
     expect(promptStatus([ans({ me: 2, comps: [["hs", 1]] })])).toBe("VISIBLE");
     expect(promptStatus([ans({ me: 1 })])).toBe("WINNING");
+    // #1 in one of three engines is not "winning".
+    const three = [ans({ me: 1, providerId: "openai" }), ans({ me: null, providerId: "gemini", comps: [["hs", 1]] }), ans({ me: 3, providerId: "perplexity", comps: [["hs", 1]] })];
+    expect(promptStatus(three)).toBe("VISIBLE");
+    expect(promptStatus([three[0]!, ans({ me: 1, providerId: "gemini" }), three[2]!])).toBe("WINNING");
     expect(promptStatus([ans({})])).toBe("NO_BRANDS");
     expect(promptStatus([])).toBe("NOT_SCANNED");
   });
@@ -48,7 +52,7 @@ describe("promptRows", () => {
     const cur = [ans({ me: 1, providerId: "openai", comps: [["hs", 2]] }), ans({ me: null, providerId: "gemini", comps: [["hs", 1]] })];
     const prev = [ans({ me: null, providerId: "openai", comps: [["hs", 1]] })];
     const [row] = promptRows(["p1", "p2"], cur, prev, ["hs", "pd"], W);
-    expect(row).toMatchObject({ promptId: "p1", answers: 2, mentionRate: 0.5, previousVisibility: 0, status: "WINNING", bestCompetitor: { competitorId: "hs" } });
+    expect(row).toMatchObject({ promptId: "p1", answers: 2, mentionRate: 0.5, previousVisibility: 0, status: "VISIBLE", bestCompetitor: { competitorId: "hs" } });
     expect(Object.keys(row!.perProvider).sort()).toEqual(["gemini", "openai"]);
     expect(row!.perProvider.gemini).toBe(0);
     expect(promptRows(["p2"], cur, prev, ["hs"], W)[0]).toMatchObject({ answers: 0, visibility: null, status: "NOT_SCANNED", bestCompetitor: null });

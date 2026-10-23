@@ -239,6 +239,7 @@ export async function getCompetitorsView(userId: string, projectId: string, rang
   return {
     brandName: ctx.brandName,
     answers: current.length,
+    series: dailySeries(current, subjects(ctx).slice(0, 6).map((s) => s.id), w),
     rows: subjects(ctx).map((s) => ({
       ...s,
       metrics: subjectMetrics(current, s.id, w),

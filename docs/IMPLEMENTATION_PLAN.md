@@ -1,6 +1,6 @@
 # AI Search Visibility (GEO) Platform — Implementation Plan
 
-Status: **Phase 4 complete** — Phase 5 next · Last updated: 2026-10-22
+Status: **Phase 5 complete** — Phase 6 next · Last updated: 2026-10-23
 
 This document is the agreed architecture and phased build plan. It is the
 source of truth for structure decisions; update it when a decision changes.
@@ -433,3 +433,22 @@ mention 0.6 · position 0.75 · SoV 0.24 · citation 0.3 · sentiment 0.6 → 10
 **History integrity**: `ResponseAnalysis`, `BrandMention`, `Citation`, `VisibilitySnapshot` reject UPDATE (trigger). Their FKs cascade only with project/organization deletion; competitors with history are deactivated, never deleted; providers/models referenced by answers are `RESTRICT`.
 
 **Migrations**: `response_analysis`, `history_fk_actions`.
+
+## 16. Phase 5 notes (as built)
+
+**Metrics** (`src/server/dashboard`): every dashboard number is computed on request from the analyzed answers in the selected window (7d / 30d / 90d, previous period = the equal-length window before it), with the same `computeVisibility` the snapshots use. An integration test proves the 7-day score equals the latest scan's snapshot. Only answers whose analysis is at the current `analysisVersion` count, and only answers whose `isDemo` matches the workspace (demo and real data never mix).
+- `aggregate.ts` is pure: per-subject metrics, daily series (scan days only, no gaps filled with invented values), per-prompt rows, prompt status, citation domains, "prompts they win", insights.
+- `metrics.ts` authorizes (`requireProjectAccess`) and loads data; it is the only module the pages call.
+
+**Prompt status** (from each engine's latest answer): WINNING = #1 in more than half of them · VISIBLE = mentioned in at least one · LOSING = absent while a competitor appears · NO_BRANDS · NOT_SCANNED.
+
+**Citation gap** (third-party domains only, 0–100):
+`100 × competitorShare × (1 − primaryShare) × ln(1 + n) / ln(1 + nmax)`, where the shares are the fractions of answers citing the domain that mention a competitor / you, and `n` is the number of answers citing it. It measures association, not cause, and the UI says so.
+
+**"Why you may be losing"** insights describe what the answers contain (absent, outranked, sources used when you are absent, your site not cited, negative descriptions). They do not claim why engines chose them. Recommendations are deferred to the Action Engine.
+
+**Pages**: Overview (hero score + delta, 4 metric cards, visibility trend + table view, per-engine scores, prompts you're losing, competitor table), Prompts (search + intent/engine/status/market filters), Prompt detail, Competitors (bar comparison, trend, metrics table, prompts they win), Citations (summary, top domains, citation gap).
+
+**Charts** (Recharts): fixed categorical order `--series-1..6`, validated for light and dark. Slot 1 is always your brand, and competitors keep their slot across pages. One y-axis fixed at 0–100. A legend is always shown, plus a table view.
+
+**Demo data** (`prisma/demo-data.ts`, non-production seed only): 8 weekly scans × prompts × 3 engines generated with a fixed-seed PRNG. Every answer is prefixed `[DEMO DATA]` and flagged `isDemo`, and all of it goes through the real analysis and snapshot code.

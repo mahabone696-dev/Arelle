@@ -73,8 +73,8 @@ export type PromptStatus = "WINNING" | "VISIBLE" | "LOSING" | "NO_BRANDS" | "NOT
 
 /**
  * Status from each engine's latest answer:
- * WINNING  = you are ranked #1 in at least one engine's latest answer
- * VISIBLE  = you are mentioned, but never first
+ * WINNING  = you are ranked #1 in most (more than half) of the engines' latest answers
+ * VISIBLE  = you are mentioned in at least one, but not #1 in most
  * LOSING   = you are absent while at least one competitor is mentioned
  * NO_BRANDS = no tracked brand mentioned at all
  */
@@ -82,7 +82,7 @@ export function promptStatus(answers: AnswerRow[]): PromptStatus {
   if (!answers.length) return "NOT_SCANNED";
   const latest = latestPerProvider(answers);
   const primary = latest.flatMap((a) => a.mentions.filter((m) => m.isPrimaryBrand));
-  if (primary.some((m) => m.position === 1)) return "WINNING";
+  if (primary.filter((m) => m.position === 1).length * 2 > latest.length) return "WINNING";
   if (primary.length) return "VISIBLE";
   if (latest.some((a) => a.mentions.some((m) => !m.isPrimaryBrand))) return "LOSING";
   return "NO_BRANDS";
