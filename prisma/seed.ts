@@ -11,6 +11,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { hashPassword } from "../src/server/auth/password";
 import { FEATURE_FLAGS } from "../src/server/flags/definitions";
+import { seedDemoScans } from "./demo-data";
 
 const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }) });
 
@@ -135,6 +136,7 @@ async function seedDemo() {
       update: {},
     });
   }
+  await seedDemoScans(db, project.id);
   console.log(`Seeded demo workspace: sign in as ${email}`);
 }
 
