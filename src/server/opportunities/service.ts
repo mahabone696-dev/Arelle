@@ -173,13 +173,20 @@ async function loadRecommendation(userId: string, projectId: string, recommendat
   return { access, rec };
 }
 
-const activeAction = <T extends { status: string }>(actions: T[]) => actions.find((a) => a.status !== "ABANDONED");
+/** Lock the recommendation row and re-read its state, so concurrent clicks can't create two actions. */
+async function lockedState(tx: Tx, recommendationId: string) {
+  await tx.$queryRaw`SELECT id FROM "Recommendation" WHERE id = ${recommendationId} FOR UPDATE`;
+  const r = await tx.recommendation.findUniqueOrThrow({ where: { id: recommendationId }, select: { status: true, actions: { where: { status: { not: "ABANDONED" } }, select: { id: true, status: true }, take: 1 } } });
+  if (r.status === "IMPLEMENTED") throw new AppError("CONFLICT", "This recommendation is already marked as implemented.");
+  return { status: r.status, active: r.actions[0] ?? null };
+}
 
 export async function planRecommendation(userId: string, projectId: string, recommendationId: string) {
   const { access, rec } = await loadRecommendation(userId, projectId, recommendationId, "action:update");
   if (rec.status === "IMPLEMENTED") throw new AppError("CONFLICT", "This recommendation is already marked as implemented.");
   await db.$transaction(async (tx) => {
-    if (!activeAction(rec.actions)) await tx.action.create({ data: { recommendationId, status: "PLANNED", createdById: userId } });
+    const { active } = await lockedState(tx, recommendationId);
+    if (!active) await tx.action.create({ data: { recommendationId, status: "PLANNED", createdById: userId } });
     await tx.recommendation.update({ where: { id: recommendationId }, data: { status: "PLANNED" } });
     await writeAuditLog({ organizationId: access.organizationId, actorId: userId, action: "recommendation.planned", entityType: "Recommendation", entityId: recommendationId }, tx);
   });
@@ -207,7 +214,6 @@ export async function implementRecommendation(userId: string, projectId: string,
   const { isDemo } = await projectInputs(projectId);
   const scope = scopeOf(rec.opportunity);
   const before = await scopeScore(projectId, isDemo, scope, new Date(input.implementedAt.getTime() - WINDOW_DAYS * DAY), input.implementedAt);
-  const current = activeAction(rec.actions);
   const data = {
     status: "IMPLEMENTED" as const,
     implementedAt: input.implementedAt,
@@ -218,6 +224,7 @@ export async function implementRecommendation(userId: string, projectId: string,
     scopePromptIds: scope,
   };
   const action = await db.$transaction(async (tx) => {
+    const { active: current } = await lockedState(tx, recommendationId);
     const a = current ? await tx.action.update({ where: { id: current.id }, data }) : await tx.action.create({ data: { ...data, recommendationId, createdById: userId } });
     await tx.recommendation.update({ where: { id: recommendationId }, data: { status: "IMPLEMENTED" } });
     await writeAuditLog({ organizationId: access.organizationId, actorId: userId, action: "recommendation.implemented", entityType: "Action", entityId: a.id, metadata: { recommendationId, implementedAt: input.implementedAt.toISOString(), baselineScore: before.score } }, tx);
@@ -310,10 +317,13 @@ export async function afterScanAnalyzed(scanId: string) {
 
 // ── Read models ───────────────────────────────────────────────
 
+/** Opportunities about prompts you've stopped tracking are hidden (they'd otherwise read as "no longer detected"). */
+const TRACKED = { OR: [{ promptId: null }, { prompt: { isActive: true } }] } satisfies Prisma.OpportunityWhereInput;
+
 export async function listOpportunities(userId: string, projectId: string, filter: { status?: OpportunityStatus; type?: OpportunityType } = {}) {
   await requireProjectAccess(userId, projectId, "project:read");
   return db.opportunity.findMany({
-    where: { projectId, status: filter.status ?? "OPEN", ...(filter.type ? { type: filter.type } : {}) },
+    where: { projectId, status: filter.status ?? "OPEN", ...(filter.type ? { type: filter.type } : {}), ...TRACKED },
     orderBy: [{ impactScore: "desc" }, { createdAt: "asc" }],
     include: { prompt: { select: { id: true, text: true, intent: true } }, recommendations: { select: { id: true, type: true, title: true, status: true, estimatedImpact: true }, orderBy: { createdAt: "asc" } } },
   });
@@ -321,7 +331,7 @@ export async function listOpportunities(userId: string, projectId: string, filte
 
 export async function opportunityCounts(userId: string, projectId: string) {
   await requireProjectAccess(userId, projectId, "project:read");
-  const rows = await db.opportunity.groupBy({ by: ["status"], where: { projectId }, _count: true });
+  const rows = await db.opportunity.groupBy({ by: ["status"], where: { projectId, ...TRACKED }, _count: true });
   return Object.fromEntries(rows.map((r) => [r.status, r._count])) as Partial<Record<OpportunityStatus, number>>;
 }
 
@@ -349,12 +359,12 @@ export async function topOpportunities(userId: string, projectId: string, take =
   await requireProjectAccess(userId, projectId, "project:read");
   const [items, total] = await Promise.all([
     db.opportunity.findMany({
-      where: { projectId, status: "OPEN" },
+      where: { projectId, status: "OPEN", ...TRACKED },
       orderBy: [{ impactScore: "desc" }, { createdAt: "asc" }],
       take,
       include: { recommendations: { where: { status: { not: "DISMISSED" } }, orderBy: { createdAt: "asc" }, take: 1, select: { id: true } } },
     }),
-    db.opportunity.groupBy({ by: ["type"], where: { projectId, status: "OPEN" }, _count: true }),
+    db.opportunity.groupBy({ by: ["type"], where: { projectId, status: "OPEN", ...TRACKED }, _count: true }),
   ]);
   return { items, byType: Object.fromEntries(total.map((t) => [t.type, t._count])) as Partial<Record<OpportunityType, number>> };
 }

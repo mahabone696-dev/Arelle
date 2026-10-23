@@ -176,6 +176,22 @@ describe("action tracking", () => {
     expect(await db.action.count({ where: { recommendationId: rec.id, status: "PLANNED" } })).toBe(1);
   });
 
+  it("concurrent clicks create one action; opportunities for prompts you stop tracking are hidden", async () => {
+    await scan(ctx, 3, false);
+    await evaluateProject(ctx.project.id);
+    const rec = (await listRecommendations(ctx.user.id, ctx.project.id))[0]!;
+    await Promise.all([1, 2, 3].map(() => planRecommendation(ctx.user.id, ctx.project.id, rec.id)));
+    expect(await db.action.count({ where: { recommendationId: rec.id } })).toBe(1);
+    const results = await Promise.allSettled([1, 2].map(() => implementRecommendation(ctx.user.id, ctx.project.id, rec.id, { implementedAt: new Date().toISOString() })));
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(await db.action.count({ where: { recommendationId: rec.id } })).toBe(1);
+
+    expect((await listOpportunities(ctx.user.id, ctx.project.id)).length).toBeGreaterThan(0);
+    await db.prompt.update({ where: { id: ctx.prompt.id }, data: { isActive: false } });
+    await evaluateProject(ctx.project.id);
+    for (const status of ["OPEN", "RESOLVED"] as const) expect((await listOpportunities(ctx.user.id, ctx.project.id, { status })).filter((o) => o.promptId)).toEqual([]);
+  });
+
   it("authorization: viewers read but can't act; other orgs see nothing", async () => {
     await scan(ctx, 3, false);
     await evaluateProject(ctx.project.id);
