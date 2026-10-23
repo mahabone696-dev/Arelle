@@ -11,12 +11,13 @@ import { defaultExecuteDeps, executeScanJob, type ExecuteDeps } from "@/server/s
 import { closeJob, finalizeScanIfDone, setScanFinalizedHook } from "@/server/scans/lifecycle";
 import { analyzeScan, defaultAnalysisDeps, type AnalysisDeps } from "@/server/analysis/service";
 import { afterScanAnalyzed } from "@/server/opportunities/service";
+import { runAudit } from "@/server/audit/service";
 import { redisQuotaGuard } from "@/server/scans/quota";
 import { scanConfigFromEnv } from "@/server/scans/config";
 import { IMPLEMENTED_PROVIDERS } from "@/server/providers/registry";
 import { logger } from "@/lib/logger";
 import { captureException } from "@/lib/monitoring";
-import { applyProviderQueueLimits, enqueueScanAnalysis, getQueue, QUEUE_NAMES, type AnalyzeJobData, type DispatchJobData, type QueryJobData } from "./queues";
+import { applyProviderQueueLimits, enqueueScanAnalysis, getQueue, QUEUE_NAMES, type AnalyzeJobData, type AuditJobData, type DispatchJobData, type QueryJobData } from "./queues";
 import { createRedis } from "./connection";
 
 const log = logger.child({ component: "worker" });
@@ -111,6 +112,9 @@ export async function startScanWorkers(options: WorkerOptions = {}): Promise<Run
       await enqueueScanAnalysis(scanId);
     }
   });
+
+  // Free public audits: a separate queue so anonymous traffic never delays customer scans.
+  workers.push(new Worker<AuditJobData>(QUEUE_NAMES.audit, async (job) => runAudit(job.data.auditId), { connection: conn(), concurrency: 2 }));
 
   const maintenance = new Worker(QUEUE_NAMES.maintenance, async () => sweepScans({ staleScanMs: cfg.staleScanMs, stuckQueuedMs: cfg.stuckQueuedMs }, dispatchDeps), { connection: conn(), concurrency: 1 });
   workers.push(maintenance);

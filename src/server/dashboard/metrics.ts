@@ -26,6 +26,11 @@ import {
 
 async function projectContext(userId: string, projectId: string) {
   const access = await requireProjectAccess(userId, projectId, "project:read");
+  return { access, ...(await loadContext(projectId)) };
+}
+
+/** Unauthenticated: callers must have authorized access to the project (session or share token). */
+async function loadContext(projectId: string) {
   const project = await db.project.findUniqueOrThrow({
     where: { id: projectId },
     select: {
@@ -37,10 +42,10 @@ async function projectContext(userId: string, projectId: string) {
       competitors: { where: { isActive: true }, select: { id: true, name: true, domain: true }, orderBy: { createdAt: "asc" } },
     },
   });
-  return { access, project, brandName: project.brand?.name ?? project.name, competitors: project.competitors, isDemo: project.organization.isDemo, weights: resolveWeights() };
+  return { project, brandName: project.brand?.name ?? project.name, competitors: project.competitors, isDemo: project.organization.isDemo, weights: resolveWeights() };
 }
 
-type Ctx = Awaited<ReturnType<typeof projectContext>>;
+type Ctx = Awaited<ReturnType<typeof loadContext>>;
 
 function loadAnswers(ctx: Ctx, from: Date, to: Date, where: AnswerFilter = {}): Promise<AnswerRow[]> {
   return loadProjectAnswers(ctx.project.id, ctx.isDemo, from, to, where);
@@ -239,3 +244,62 @@ export async function getCitationsView(userId: string, projectId: string, range:
       .slice(0, 10),
   };
 }
+
+// ── Report ────────────────────────────────────────────────────
+
+/**
+ * Everything a visibility report shows, for one project and date range.
+ * Unauthenticated by design (used by share links): the caller authorizes.
+ */
+export async function buildProjectReport(projectId: string, range: DateRangeKey) {
+  const ctx = await loadContext(projectId);
+  const { current, previous } = await windowAnswers(ctx, range);
+  const w = ctx.weights;
+  const [prompts, opportunities, implemented] = await Promise.all([
+    db.prompt.findMany({ where: { projectId, isActive: true }, select: { id: true, text: true, intent: true, priority: true } }),
+    db.opportunity.findMany({ where: { projectId, status: "OPEN", OR: [{ promptId: null }, { prompt: { isActive: true } }] }, orderBy: [{ impactScore: "desc" }, { createdAt: "asc" }], take: 5, select: { id: true, type: true, title: true, description: true, impactScore: true } }),
+    db.action.findMany({
+      where: { status: "IMPLEMENTED", recommendation: { opportunity: { projectId } } },
+      orderBy: { implementedAt: "desc" },
+      take: 10,
+      select: { implementedAt: true, baselineScore: true, recommendation: { select: { title: true, type: true } }, measurements: { orderBy: { measuredAt: "desc" }, take: 1, select: { afterScore: true, delta: true, daysSinceImplementation: true, afterAnswers: true } } },
+    }),
+  ]);
+  const promptById = new Map(prompts.map((p) => [p.id, p]));
+  const competitorName = new Map(ctx.competitors.map((c) => [c.id, c.name]));
+  const rows = promptRows(prompts.map((p) => p.id), current, [], ctx.competitors.map((c) => c.id), w).filter((r) => r.answers > 0);
+  const withPrompt = (r: (typeof rows)[number]) => ({ ...r, prompt: promptById.get(r.promptId)!, competitor: r.bestCompetitor ? (competitorName.get(r.bestCompetitor.competitorId) ?? null) : null });
+  const domains = citationDomains(current);
+  return {
+    project: { id: ctx.project.id, name: ctx.project.name, domain: ctx.project.domain },
+    brandName: ctx.brandName,
+    isDemo: ctx.isDemo,
+    range,
+    generatedAt: new Date(),
+    answers: current.length,
+    primary: current.length ? withDeltas(subjectMetrics(current, null, w), previous.length ? subjectMetrics(previous, null, w) : null) : null,
+    series: dailySeries(current, subjects(ctx).slice(0, 6).map((s) => s.id), w),
+    seriesSubjects: subjects(ctx).slice(0, 6),
+    competitors: subjects(ctx)
+      .map((s) => ({ ...s, metrics: subjectMetrics(current, s.id, w) }))
+      .sort((a, b) => b.metrics.visibilityScore - a.metrics.visibilityScore),
+    winning: rows
+      .filter((r) => r.status === "WINNING" || (r.mentionRate ?? 0) > 0)
+      .sort((a, b) => (b.visibility ?? 0) - (a.visibility ?? 0))
+      .slice(0, 5)
+      .map(withPrompt),
+    losing: rows
+      .filter((r) => r.status === "LOSING")
+      .map(withPrompt)
+      .sort((a, b) => b.prompt.priority - a.prompt.priority || (b.bestCompetitor?.visibility ?? 0) - (a.bestCompetitor?.visibility ?? 0))
+      .slice(0, 5),
+    citationGaps: domains
+      .filter((d) => d.gapScore !== null && d.gapScore > 0)
+      .sort((a, b) => b.gapScore! - a.gapScore! || b.answers - a.answers)
+      .slice(0, 5),
+    opportunities,
+    actionsCompleted: implemented.map((a) => ({ title: a.recommendation.title, type: a.recommendation.type, implementedAt: a.implementedAt!, before: a.baselineScore, after: a.measurements[0]?.afterScore ?? null, delta: a.measurements[0]?.delta ?? null, days: a.measurements[0]?.daysSinceImplementation ?? null, answers: a.measurements[0]?.afterAnswers ?? 0 })),
+  };
+}
+
+export type ProjectReport = Awaited<ReturnType<typeof buildProjectReport>>;

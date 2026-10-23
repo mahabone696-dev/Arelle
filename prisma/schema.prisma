@@ -215,6 +215,7 @@ model User {
   analyses    WebsiteAnalysis[]
   actions     Action[]             @relation("ActionCreatedBy")
   auditLogs   AuditLog[]
+  reportShares   ReportShare[] @relation("ReportShareCreatedBy")
 }
 
 model Account {
@@ -895,13 +896,19 @@ model ReportShare {
   // SHA-256 of the share token; the raw token is shown once.
   tokenHash String    @unique
   title     String?
-  // White-label settings (logo, colours, agency name) for future agency reports.
+  // White-label settings (agency name, accent colour; logo later) for agency reports.
   branding  Json      @default("{}")
+  // Date range the report covers ("7d" | "30d" | "90d"); data is live within that window.
+  range        String    @default("30d") @db.VarChar(8)
+  createdById  String?
+  viewCount    Int       @default(0)
+  lastViewedAt DateTime? @db.Timestamptz(3)
   expiresAt DateTime? @db.Timestamptz(3)
   revokedAt DateTime? @db.Timestamptz(3)
   createdAt DateTime  @default(now()) @db.Timestamptz(3)
 
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User?   @relation("ReportShareCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([projectId])
 }

@@ -31,7 +31,7 @@ function AnalysisProgress() {
   );
 }
 
-export function StartForm({ action: serverAction }: { action: (prev: ActionResult | null, fd: FormData) => Promise<ActionResult> }) {
+export function StartForm({ action: serverAction, initialUrl, initialCountry }: { action: (prev: ActionResult | null, fd: FormData) => Promise<ActionResult>; initialUrl?: string; initialCountry?: string }) {
   const [state, action, pending] = useActionState(serverAction, null);
   const values = state && !state.ok ? state.values : undefined;
   const tz = typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "UTC";
@@ -51,7 +51,7 @@ export function StartForm({ action: serverAction }: { action: (prev: ActionResul
           placeholder="https://example.com"
           required
           autoFocus
-          defaultValue={values?.url}
+          defaultValue={values?.url ?? initialUrl}
           className="h-11 text-base"
           aria-invalid={!!(state && !state.ok)}
           aria-describedby={state && !state.ok ? "url-error" : undefined}
@@ -66,7 +66,7 @@ export function StartForm({ action: serverAction }: { action: (prev: ActionResul
           <Label htmlFor="country" className="text-xs text-muted-foreground">
             Market
           </Label>
-          <NativeSelect id="country" name="country" defaultValue={values?.country ?? "US"} key={`c-${values?.country}`} className="h-8 text-[13px]">
+          <NativeSelect id="country" name="country" defaultValue={values?.country ?? initialCountry ?? "US"} key={`c-${values?.country}`} className="h-8 text-[13px]">
             {COUNTRIES.map((c) => (
               <option key={c.code} value={c.code}>
                 {c.name}

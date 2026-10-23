@@ -6,12 +6,13 @@ import { Input } from "@/components/ui/input";
 import { FormField } from "@/components/ui/form-field";
 import { signUpAction } from "../actions";
 
-export function SignUpForm() {
+export function SignUpForm({ callbackUrl }: { callbackUrl?: string }) {
   const [state, action, pending] = useActionState(signUpAction, null);
   const fieldError = (name: string) => (state && !state.ok ? state.fieldErrors?.[name]?.[0] : undefined);
   const values = state && !state.ok ? state.values : undefined;
   return (
     <form action={action} className="grid gap-4">
+      <input type="hidden" name="callbackUrl" value={callbackUrl ?? "/"} />
       <FormField id="name" label="Name" error={fieldError("name")}>
         <Input id="name" name="name" autoComplete="name" required defaultValue={values?.name} aria-invalid={!!fieldError("name")} />
       </FormField>

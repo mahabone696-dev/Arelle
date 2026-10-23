@@ -53,7 +53,7 @@ export async function signUpAction(_prev: ActionResult | null, formData: FormDat
     return { ok: false, error: "Something went wrong. Please try again.", values };
   }
   try {
-    await signIn("credentials", { email: parsed.data.email, password: parsed.data.password, redirectTo: "/" });
+    await signIn("credentials", { email: parsed.data.email, password: parsed.data.password, redirectTo: safeRedirect(formData.get("callbackUrl")) });
     return { ok: true, data: undefined };
   } catch (error) {
     if (error instanceof AuthError) return { ok: false, error: "Account created — please sign in." };

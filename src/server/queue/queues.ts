@@ -11,6 +11,7 @@ export const QUEUE_NAMES = {
   dispatch: "scan-dispatch",
   maintenance: "scan-maintenance",
   analyze: "scan-analyze",
+  audit: "public-audit",
   /** One queue per provider so each has its own concurrency and rate limit. */
   query: (providerSlug: string) => `scan-query-${providerSlug}`,
 } as const;
@@ -65,4 +66,13 @@ export async function applyProviderQueueLimits(providerSlug: string, limits: { m
   const q = getQueue(QUEUE_NAMES.query(providerSlug));
   await q.setGlobalConcurrency(Math.max(1, limits.maxConcurrency));
   await q.setGlobalRateLimit(Math.max(1, limits.requestsPerMinute), 60_000);
+}
+
+export interface AuditJobData {
+  auditId: string;
+}
+
+/** Public audits run once: no retries, so a failure never repeats paid queries. */
+export async function enqueuePublicAudit(auditId: string): Promise<void> {
+  await getQueue(QUEUE_NAMES.audit).add("audit", { auditId } satisfies AuditJobData, { jobId: `audit-${auditId}`, attempts: 1 });
 }
