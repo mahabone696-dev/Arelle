@@ -44,6 +44,12 @@ export interface ScanPreview extends ScanPlan {
   blockedReason?: string;
 }
 
+/** Demo workspaces only ever hold labelled demo data, so they never run paid scans. */
+async function isDemoProject(projectId: string) {
+  const p = await db.project.findUnique({ where: { id: projectId }, select: { organization: { select: { isDemo: true } } } });
+  return p?.organization.isDemo ?? false;
+}
+
 async function activePrompts(projectId: string) {
   return db.prompt.findMany({
     where: { projectId, isActive: true },
@@ -55,10 +61,11 @@ async function activePrompts(projectId: string) {
 /** What a scan would do right now (for the confirmation UI). Never enqueues anything. */
 export async function previewScan(userId: string, projectId: string, deps: ScanServiceDeps = defaultScanDeps()): Promise<ScanPreview> {
   await requireProjectAccess(userId, projectId, "project:read");
-  const [kill, availability, prompts] = await Promise.all([getScanKillSwitch(), deps.availability(), activePrompts(projectId)]);
+  const [kill, availability, prompts, demo] = await Promise.all([getScanKillSwitch(), deps.availability(), activePrompts(projectId), isDemoProject(projectId)]);
   const plan = await computeScanPlan(projectId, prompts, availability.ready);
   let blockedReason: string | undefined;
-  if (kill.enabled) blockedReason = "Scanning is temporarily paused.";
+  if (demo) blockedReason = "Demo workspaces show sample data and can't run scans.";
+  else if (kill.enabled) blockedReason = "Scanning is temporarily paused.";
   else if (!availability.ready.length) blockedReason = "No AI engines are available.";
   else if (!prompts.length) blockedReason = "Approve at least one prompt first.";
   return {
@@ -74,6 +81,7 @@ export async function createScan(userId: string, projectId: string, options: { s
   const access = await requireProjectAccess(userId, projectId, "scan:run");
   const scanType = options.scanType ?? "MANUAL";
   const cfg = deps.config;
+  if (await isDemoProject(projectId)) throw new AppError("FORBIDDEN", "Demo workspaces show sample data and can't run scans. Create your own workspace to scan your site.");
 
   const userLimit = await rateLimit(`scan:create:${userId}`, 20, 60 * 60 * 1000);
   if (!userLimit.allowed) throw new AppError("LIMIT_EXCEEDED", "Too many scans started recently. Try again later.");

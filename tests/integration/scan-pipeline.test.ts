@@ -226,6 +226,14 @@ describe("scan admission limits", () => {
     await expect(createScan(user.id, project.id, {}, noQueue())).rejects.toMatchObject({ code: "CONFLICT" });
   });
 
+  it("refuses scans in demo workspaces (their dashboards only show demo data)", async () => {
+    const { user, org, project } = await setupProject(FIVE);
+    await db.organization.update({ where: { id: org.id }, data: { isDemo: true } });
+    expect((await previewScan(user.id, project.id, noQueue())).blockedReason).toMatch(/Demo workspaces/);
+    await expect(createScan(user.id, project.id, {}, noQueue())).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(await db.scan.count({ where: { projectId: project.id } })).toBe(0);
+  });
+
   it("enforces plan limits: FREE allows 1 manual scan/day and 10 prompts", async () => {
     const free = await setupProject(FIVE, "FREE");
     const s = await createScan(free.user.id, free.project.id, {}, noQueue());
