@@ -26,6 +26,7 @@ import { extractBrandDeterministic, extractBrandWithAI } from "./brand-extractio
 import { suggestCompetitorsWithAI, type BrandContext } from "./competitors";
 import { buildInitialPrompts } from "./prompts";
 import { assertCanAnalyze, assertCanGenerate, withinAiBudget } from "./limits";
+import { getOrgPlan } from "@/server/billing/limits";
 import { recordAiUsage, recordCrawlUsage } from "./usage";
 import {
   brandProfileInputSchema,
@@ -356,6 +357,7 @@ export async function savePromptReview(userId: string, projectId: string, input:
   const access = await requireProjectAccess(userId, projectId, "project:update");
   const data = promptReviewSchema.parse(input);
   const project = await db.project.findUniqueOrThrow({ where: { id: projectId }, select: { country: true, language: true } });
+  const plan = await getOrgPlan(access.organizationId);
 
   const texts = data.prompts.map((p) => p.text.toLowerCase());
   if (new Set(texts).size !== texts.length) throw new AppError("VALIDATION", "Each prompt must be unique.");
@@ -391,6 +393,11 @@ export async function savePromptReview(userId: string, projectId: string, input:
         if (p.id) await tx.prompt.update({ where: { id: p.id }, data: fields });
         else await tx.prompt.create({ data: { ...fields, projectId, country: project.country, language: project.language, source: "USER" } });
       }
+      // Active (tracked) prompts are capped by the plan, server-side — the same limit scans enforce.
+      const active = await tx.prompt.count({ where: { projectId, isActive: true } });
+      if (active > plan.limits.prompts) {
+        throw new AppError("LIMIT_EXCEEDED", `Your ${plan.tier.charAt(0) + plan.tier.slice(1).toLowerCase()} plan tracks up to ${plan.limits.prompts} prompts; ${active} are approved. Un-approve ${active - plan.limits.prompts} or upgrade.`, { limit: plan.limits.prompts, active });
+      }
       if (data.finish) await tx.project.update({ where: { id: projectId }, data: { onboardingStep: "COMPLETED", onboardingCompletedAt: now } });
     });
   } catch (error) {
@@ -422,7 +429,8 @@ export async function getOnboardingState(userId: string, projectId: string) {
     db.competitor.findMany({ where: { projectId, isActive: true }, orderBy: [{ confidence: { sort: "desc", nulls: "last" } }, { createdAt: "asc" }] }),
     db.prompt.findMany({ where: { projectId }, include: { cluster: { select: { name: true } } }, orderBy: [{ createdAt: "asc" }] }),
   ]);
-  return { access, project, brand, analysis, competitors, prompts };
+  const plan = await getOrgPlan(access.organizationId);
+  return { access, project, brand, analysis, competitors, prompts, plan };
 }
 
 export function nextOnboardingPath(step: OnboardingStep): "brand" | "competitors" | "prompts" | null {

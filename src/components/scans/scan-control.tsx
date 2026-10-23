@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -34,6 +34,7 @@ const ACTIVE = new Set(["QUEUED", "RUNNING"]);
 function useScanProgress(projectId: string, scanId: string | null) {
   const [progress, setProgress] = useState<Progress | null>(null);
   const router = useRouter();
+  const lastStatus = useRef<string | null>(null);
   useEffect(() => {
     if (!scanId) return;
     let stop = false;
@@ -45,10 +46,14 @@ function useScanProgress(projectId: string, scanId: string | null) {
           const p = (await res.json()) as Progress;
           if (stop) return;
           setProgress(p);
+          // Server-rendered parts of the page (e.g. "Recent scans") follow each status change.
+          const changed = lastStatus.current !== null && lastStatus.current !== p.status;
+          lastStatus.current = p.status;
           if (!ACTIVE.has(p.status)) {
             router.refresh();
             return;
           }
+          if (changed) router.refresh();
         }
       } catch {
         /* transient network error: keep polling */

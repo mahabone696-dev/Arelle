@@ -75,9 +75,10 @@ function routedLLM() {
   });
 }
 
-async function setup(email = "owner@nw.com") {
+async function setup(email = "owner@nw.com", tier: "FREE" | "GROWTH" = "GROWTH") {
   const user = await db.user.create({ data: { email } });
   const org = await createOrganization(user.id, { name: "NW Org" });
+  await db.subscription.update({ where: { organizationId: org.id }, data: { planTier: tier } });
   return { user, org };
 }
 
@@ -294,5 +295,18 @@ describe("onboarding review fixes", () => {
     const state = await getOnboardingState(user.id, projectId);
     expect(await db.websiteAnalysis.count({ where: { projectId, status: "RUNNING" } })).toBe(0);
     expect(state.analysis).toBeTruthy();
+  });
+});
+
+describe("plan prompt limit", () => {
+  it("refuses approving more prompts than the plan tracks, and changes nothing", async () => {
+    const { user, org } = await setup("free@nw.com", "FREE");
+    const deps: OnboardingDeps = { llm: null, crawl: async (url) => fakeCrawl(new URL(url).hostname) };
+    const { projectId } = await startOnboarding(user.id, org.id, { url: "northwind.com", ...market }, deps);
+    const items = Array.from({ length: 11 }, (_, i) => ({ text: `prompt number ${i}`, intent: "COMMERCIAL" as const, cluster: "CRM", priority: 3, approved: true }));
+    await expect(savePromptReview(user.id, projectId, { prompts: items, finish: true })).rejects.toMatchObject({ code: "LIMIT_EXCEEDED", details: { limit: 10, active: 11 } });
+    expect(await db.prompt.count({ where: { projectId } })).toBe(0);
+    expect((await db.project.findUniqueOrThrow({ where: { id: projectId } })).onboardingCompletedAt).toBeNull();
+    await expect(savePromptReview(user.id, projectId, { prompts: items.map((p, i) => ({ ...p, approved: i < 10 })), finish: true })).resolves.toEqual({ approved: 10 });
   });
 });

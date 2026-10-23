@@ -20,8 +20,19 @@ export default async function PromptsStepPage({
   searchParams: Promise<{ saved?: string }>;
 }) {
   const [{ orgSlug, projectId }, { saved }] = await Promise.all([params, searchParams]);
-  const { user, project, prompts: unsorted, basePath } = await loadOnboarding(orgSlug, projectId);
+  const { user, project, prompts: unsorted, basePath, plan } = await loadOnboarding(orgSlug, projectId);
   const prompts = [...unsorted].sort((a, b) => INTENT_ORDER.get(a.intent)! - INTENT_ORDER.get(b.intent)! || b.priority - a.priority || a.text.localeCompare(b.text));
+  // Pre-approve never-reviewed suggestions by priority, only up to the plan's prompt limit.
+  const alreadyActive = prompts.filter((p) => p.reviewedAt && p.isActive).length;
+  const defaultApproved = new Set(
+    project.onboardingCompletedAt
+      ? []
+      : [...prompts]
+          .filter((p) => !p.reviewedAt)
+          .sort((a, b) => b.priority - a.priority || INTENT_ORDER.get(a.intent)! - INTENT_ORDER.get(b.intent)!)
+          .slice(0, Math.max(0, plan.limits.prompts - alreadyActive))
+          .map((p) => p.id),
+  );
   const sources = new Set(prompts.filter((p) => !p.approvedAt).map((p) => p.source));
 
   return (
@@ -40,6 +51,8 @@ export default async function PromptsStepPage({
           key={prompts.map((p) => p.id).join(",")}
           completed={!!project.onboardingCompletedAt}
           justSaved={Boolean(saved)}
+          promptLimit={plan.limits.prompts}
+          planName={plan.tier.charAt(0) + plan.tier.slice(1).toLowerCase()}
           save={savePromptsAction.bind(null, orgSlug, projectId)}
           regenerate={regeneratePromptsAction.bind(null, orgSlug, projectId)}
           initial={prompts.map((p) => ({
@@ -50,9 +63,8 @@ export default async function PromptsStepPage({
             priority: p.priority,
             reason: p.reason ?? "",
             source: p.source,
-            // Never-reviewed suggestions default to approved so the common path is one click;
-            // explicit decisions are kept.
-            approved: p.reviewedAt ? p.isActive : !project.onboardingCompletedAt,
+            // Explicit decisions are kept; fresh suggestions are pre-approved within the plan limit.
+            approved: p.reviewedAt ? p.isActive : defaultApproved.has(p.id),
           }))}
         />
       </div>

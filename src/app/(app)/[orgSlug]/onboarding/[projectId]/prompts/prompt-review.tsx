@@ -33,12 +33,16 @@ export function PromptReview({
   initial,
   completed,
   justSaved,
+  promptLimit,
+  planName,
   save,
   regenerate,
 }: {
   initial: Omit<Row, "key">[];
   completed: boolean;
   justSaved: boolean;
+  promptLimit: number;
+  planName: string;
   save: (prev: ActionResult | null, fd: FormData) => Promise<ActionResult>;
   regenerate: () => Promise<ActionResult>;
 }) {
@@ -70,6 +74,7 @@ export function PromptReview({
     deletedIds,
   });
   const invalid = rows.some((r) => r.text.trim().length < 3);
+  const overLimit = approvedCount > promptLimit;
 
   return (
     <form action={action}>
@@ -187,8 +192,9 @@ export function PromptReview({
       <div className="sticky bottom-0 -mx-4 mt-8 border-t bg-sidebar/95 px-4 py-4 backdrop-blur">
         <div className="flex flex-wrap items-center gap-3">
           <span className="tabular text-sm">
-            <span className="font-medium">{approvedCount}</span> <span className="text-muted-foreground">of {rows.length} prompts approved</span>
+            <span className={cn("font-medium", overLimit && "text-destructive")}>{approvedCount}</span> <span className="text-muted-foreground">of {rows.length} approved · {planName} plan tracks up to {promptLimit}</span>
           </span>
+          {overLimit ? <span className="text-[13px] text-destructive">Un-approve {approvedCount - promptLimit} to continue, or upgrade your plan.</span> : null}
           {state && !state.ok ? (
             <span role="alert" className="text-[13px] text-destructive">
               {state.error}
@@ -197,10 +203,10 @@ export function PromptReview({
             <span className="text-[13px] text-success">Saved</span>
           ) : null}
           <div className="ml-auto flex gap-2">
-            <Button type="submit" name="intent" value="save" variant="outline" disabled={pending || invalid}>
+            <Button type="submit" name="intent" value="save" variant="outline" disabled={pending || invalid || overLimit}>
               Save draft
             </Button>
-            <Button type="submit" name="intent" value="finish" disabled={pending || invalid || approvedCount === 0}>
+            <Button type="submit" name="intent" value="finish" disabled={pending || invalid || approvedCount === 0 || overLimit}>
               {pending ? "Saving…" : completed ? "Save prompts" : `Approve ${approvedCount} prompts & finish`}
             </Button>
           </div>

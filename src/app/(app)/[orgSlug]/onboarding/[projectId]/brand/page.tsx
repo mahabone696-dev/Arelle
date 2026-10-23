@@ -74,8 +74,8 @@ export default async function BrandStepPage({ params }: { params: Promise<{ orgS
           </Card>
         </div>
 
-        <aside className="lg:pt-16">
-          <Card>
+        <aside className="min-w-0 lg:pt-16">
+          <Card className="overflow-hidden">
             <CardHeader>
               <CardTitle className="flex items-center justify-between gap-2">
                 Website analysis
@@ -88,10 +88,10 @@ export default async function BrandStepPage({ params }: { params: Promise<{ orgS
                 <>
                   <dl className="grid grid-cols-2 gap-y-1.5">
                     <dt className="text-muted-foreground">Pages read</dt>
-                    <dd className="tabular text-right">{analysis.pagesCrawled}</dd>
+                    <dd className="tabular truncate text-right">{analysis.pagesCrawled}</dd>
                     <dt className="text-muted-foreground">robots.txt</dt>
                     <dd className="text-right">{analysis.robotsStatus?.startsWith("PARSED") ? "Respected" : analysis.robotsStatus?.startsWith("MISSING") ? "None found" : "Unavailable"}</dd>
-                    {analysis.aiModel ? (
+                    {analysis.method === "AI" && analysis.aiModel ? (
                       <>
                         <dt className="text-muted-foreground">Model</dt>
                         <dd className="truncate text-right">{analysis.aiModel}</dd>
