@@ -21,6 +21,7 @@ export function ProjectShell({
   projects,
   projectId,
   isDemo,
+  canCreate,
   children,
 }: {
   user: ShellUser;
@@ -29,6 +30,8 @@ export function ProjectShell({
   projects: ProjectOption[];
   projectId: string;
   isDemo: boolean;
+  /** Role may create projects (shows "New project"). */
+  canCreate: boolean;
   children: React.ReactNode;
 }) {
   const basePath = `/${orgSlug}/p/${projectId}`;
@@ -55,7 +58,7 @@ export function ProjectShell({
             <Link href="/" className="md:hidden">
               <Logo className="[&>span]:hidden" />
             </Link>
-            <ProjectSwitcher orgSlug={orgSlug} projects={projects} currentId={projectId} />
+            <ProjectSwitcher orgSlug={orgSlug} projects={projects} currentId={projectId} canCreate={canCreate} />
             {isDemo ? (
               <span className="shrink-0 whitespace-nowrap rounded border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide">
                 <span className="sm:hidden">Demo</span>

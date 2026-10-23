@@ -31,18 +31,23 @@ export async function requireSessionUser(): Promise<SessionUser> {
   return user;
 }
 
-/** For pages: resolve org access or render 404. */
+/**
+ * For pages: resolve org access. Non-members get a 404 (existence is never
+ * revealed); members whose role lacks the permission go back to the
+ * organization home instead of a dead end.
+ */
 export async function requireOrgPage(orgSlug: string, permission?: Permission): Promise<{ user: SessionUser; access: OrgAccess }> {
   const user = await requireSessionUser();
   try {
     return { user, access: await requireOrgAccess(user.id, { slug: orgSlug }, permission) };
   } catch (error) {
+    if (isAppError(error) && error.code === "FORBIDDEN") redirect(`/${orgSlug}`);
     if (isAppError(error)) notFound();
     throw error;
   }
 }
 
-/** For pages: resolve project access (and that it belongs to orgSlug) or render 404. */
+/** For pages: resolve project access (and that it belongs to orgSlug); 404 for non-members, back to the project for read-only roles. */
 export async function requireProjectPage(
   orgSlug: string,
   projectId: string,
@@ -54,6 +59,7 @@ export async function requireProjectPage(
     if (access.organizationSlug !== orgSlug) notFound();
     return { user, access };
   } catch (error) {
+    if (isAppError(error) && error.code === "FORBIDDEN") redirect(`/${orgSlug}/p/${projectId}`);
     if (isAppError(error)) notFound();
     throw error;
   }

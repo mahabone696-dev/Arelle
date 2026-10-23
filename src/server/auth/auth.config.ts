@@ -24,7 +24,12 @@ export const authConfig = {
       if (request.nextUrl.pathname.startsWith("/api/")) {
         return Response.json({ error: "UNAUTHENTICATED" }, { status: 401 });
       }
-      return false;
+      // Only a relative callback: Auth.js' default also copies the page's query string
+      // (filters, search terms) onto /sign-in itself.
+      // Auth.js requires an absolute Location; the callback itself stays a relative path.
+      const signIn = new URL("/sign-in", request.nextUrl);
+      signIn.searchParams.set("callbackUrl", `${request.nextUrl.pathname}${request.nextUrl.search}`);
+      return Response.redirect(signIn);
     },
     jwt({ token, user }) {
       if (user?.id) token.sub = user.id;

@@ -9,6 +9,7 @@ import { BarCompare } from "@/components/charts/bar-compare";
 import { ChartLegend, TrendChart } from "@/components/charts/trend-chart";
 import { Delta, num1, pct } from "@/components/dashboard/delta";
 import { getProjectPage } from "@/server/auth/session";
+import { can } from "@/server/auth/policy";
 import { getCompetitorsView } from "@/server/dashboard/metrics";
 import { parseDateRange } from "@/lib/date-range";
 
@@ -16,15 +17,16 @@ export const metadata: Metadata = { title: "Competitors" };
 
 export default async function CompetitorsPage({ params, searchParams }: { params: Promise<{ orgSlug: string; projectId: string }>; searchParams: Promise<{ range?: string }> }) {
   const [{ orgSlug, projectId }, sp] = await Promise.all([params, searchParams]);
-  const { user } = await getProjectPage(orgSlug, projectId);
+  const { user, access } = await getProjectPage(orgSlug, projectId);
   const range = parseDateRange(sp.range);
   const v = await getCompetitorsView(user.id, projectId, range);
   const base = `/${orgSlug}/p/${projectId}`;
-  const edit = (
+  // Editing goes through onboarding, which needs project:update; viewers don't get a dead link.
+  const edit = can(access.role, "project:update") ? (
     <Button asChild variant="outline" size="sm">
       <Link href={`/${orgSlug}/onboarding/${projectId}/competitors`}>Edit competitors</Link>
     </Button>
-  );
+  ) : undefined;
   if (v.rows.length <= 1) {
     return (
       <>

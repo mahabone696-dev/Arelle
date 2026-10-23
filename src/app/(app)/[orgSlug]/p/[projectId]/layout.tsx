@@ -2,6 +2,7 @@ import { ProjectShell } from "@/components/layout/app-shell";
 import { getProjectPage } from "@/server/auth/session";
 import { listOrganizationsForUser } from "@/server/organizations/service";
 import { listProjects } from "@/server/projects/service";
+import { can } from "@/server/auth/policy";
 
 export default async function ProjectLayout({
   params,
@@ -15,7 +16,7 @@ export default async function ProjectLayout({
   const [orgs, projects] = await Promise.all([listOrganizationsForUser(user.id), listProjects(user.id, access.organizationId)]);
   const isDemo = orgs.find((o) => o.slug === orgSlug)?.isDemo ?? false;
   return (
-    <ProjectShell user={user} orgs={orgs} orgSlug={orgSlug} projects={projects} projectId={projectId} isDemo={isDemo}>
+    <ProjectShell user={user} orgs={orgs} orgSlug={orgSlug} projects={projects} projectId={projectId} isDemo={isDemo} canCreate={can(access.role, "project:create")}>
       {children}
     </ProjectShell>
   );

@@ -17,7 +17,7 @@ export interface ProjectOption {
   domain: string;
 }
 
-export function ProjectSwitcher({ orgSlug, projects, currentId }: { orgSlug: string; projects: ProjectOption[]; currentId?: string }) {
+export function ProjectSwitcher({ orgSlug, projects, currentId, canCreate = true }: { orgSlug: string; projects: ProjectOption[]; currentId?: string; canCreate?: boolean }) {
   const current = projects.find((p) => p.id === currentId);
   return (
     <DropdownMenu>
@@ -39,12 +39,16 @@ export function ProjectSwitcher({ orgSlug, projects, currentId }: { orgSlug: str
             </Link>
           </DropdownMenuItem>
         ))}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem asChild>
-          <Link href={`/${orgSlug}/onboarding`}>
-            <Plus /> New project
-          </Link>
-        </DropdownMenuItem>
+        {canCreate ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem asChild>
+              <Link href={`/${orgSlug}/onboarding`}>
+                <Plus /> New project
+              </Link>
+            </DropdownMenuItem>
+          </>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );

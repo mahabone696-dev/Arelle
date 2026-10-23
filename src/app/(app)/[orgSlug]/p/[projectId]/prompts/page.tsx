@@ -11,6 +11,7 @@ import { FilterForm } from "@/components/dashboard/filter-form";
 import { Delta, num1 } from "@/components/dashboard/delta";
 import { PROMPT_STATUSES, PromptStatusBadge, statusLabel } from "@/components/dashboard/prompt-status";
 import { getProjectPage } from "@/server/auth/session";
+import { can } from "@/server/auth/policy";
 import { getPromptsTable, type PromptFilters } from "@/server/dashboard/metrics";
 import { promptOpportunities } from "@/server/opportunities/service";
 import { ImpactBadge, OPPORTUNITY_LABELS } from "@/components/actions/labels";
@@ -33,7 +34,7 @@ export default async function PromptsPage({
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const [{ orgSlug, projectId }, sp] = await Promise.all([params, searchParams]);
-  const { user } = await getProjectPage(orgSlug, projectId);
+  const { user, access } = await getProjectPage(orgSlug, projectId);
   const range = parseDateRange(sp.range);
   const [country, language] = (sp.market ?? "").split("-");
   const filters: PromptFilters = {
@@ -47,11 +48,12 @@ export default async function PromptsPage({
   const [{ rows, providers, allProviders, markets }, opps] = await Promise.all([getPromptsTable(user.id, projectId, range, filters), promptOpportunities(user.id, projectId)]);
   const base = `/${orgSlug}/p/${projectId}`;
   const filtered = Object.values(filters).some(Boolean);
-  const edit = (
+  // Editing goes through onboarding, which needs project:update; viewers don't get a dead link.
+  const edit = can(access.role, "project:update") ? (
     <Button asChild variant="outline" size="sm">
       <Link href={`/${orgSlug}/onboarding/${projectId}/prompts`}>Edit prompts</Link>
     </Button>
-  );
+  ) : undefined;
 
   return (
     <>

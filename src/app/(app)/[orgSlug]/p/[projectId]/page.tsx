@@ -75,11 +75,13 @@ export default async function OverviewPage({
               Confirm your brand profile, competitors and prompts to start tracking AI visibility.
             </div>
           </div>
-          <Button asChild size="sm">
-            <Link href={`/${orgSlug}/onboarding/${projectId}`}>
-              Continue setup <ArrowRight />
-            </Link>
-          </Button>
+          {can(access.role, "project:update") ? (
+            <Button asChild size="sm">
+              <Link href={`/${orgSlug}/onboarding/${projectId}`}>
+                Continue setup <ArrowRight />
+              </Link>
+            </Button>
+          ) : null}
         </Card>
       ) : (
         <Card className="mb-4 flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center">
