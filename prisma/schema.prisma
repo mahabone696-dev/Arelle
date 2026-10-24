@@ -1,0 +1,939 @@
+// AI Search Visibility platform — data model.
+// See docs/IMPLEMENTATION_PLAN.md §5 for design notes.
+//
+// Conventions:
+// - Analytic history (AIResponse, BrandMention, Citation, VisibilitySnapshot,
+//   UsageRecord, AuditLog, ActionMeasurement) is append-only. These models have
+//   no `updatedAt` and must never be updated by application code.
+// - country = ISO-3166-1 alpha-2 (uppercase), language = ISO-639-1 (lowercase),
+//   locale = BCP-47 (e.g. "en-US").
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────────────────────── Enums ─────────────────────────────
+
+enum OrgRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum PlanTier {
+  FREE
+  STARTER
+  GROWTH
+  AGENCY
+}
+
+enum EntitySource {
+  USER
+  AI_SUGGESTED
+  // Deterministic template output (no AI involved); shown with a label in the UI.
+  TEMPLATE
+  DEMO
+}
+
+enum OnboardingStep {
+  ANALYZE
+  BRAND
+  COMPETITORS
+  PROMPTS
+  COMPLETED
+}
+
+enum WebsiteAnalysisStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum PromptIntent {
+  INFORMATIONAL
+  COMMERCIAL
+  TRANSACTIONAL
+  COMPARISON
+  ALTERNATIVE
+  BRANDED
+}
+
+enum PromptCategory {
+  CATEGORY
+  COMMERCIAL
+  COMPARISON
+  ALTERNATIVE
+  PROBLEM
+  PURCHASE_INTENT
+  BRANDED
+}
+
+enum ScanStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  PARTIAL
+  FAILED
+  CANCELLED
+}
+
+enum ScanType {
+  MANUAL
+  SCHEDULED
+  ONBOARDING
+  AUDIT
+}
+
+enum ScanJobStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  SKIPPED
+}
+
+enum MentionType {
+  PRIMARY
+  COMPETITOR
+  OTHER
+}
+
+enum ExtractionMethod {
+  DETERMINISTIC
+  AI
+}
+
+enum CitationOwner {
+  PRIMARY
+  COMPETITOR
+  THIRD_PARTY
+}
+
+enum ScanAnalysisStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum OpportunityType {
+  LOST_PROMPT
+  COMPETITOR_DOMINANCE
+  CITATION_GAP
+  POSITION_GAP
+  CONTENT_GAP
+}
+
+enum OpportunityStatus {
+  OPEN
+  DISMISSED
+  RESOLVED
+}
+
+enum RecommendationType {
+  CREATE_CONTENT
+  UPDATE_CONTENT
+  CREATE_COMPARISON_PAGE
+  CREATE_LANDING_PAGE
+  ADD_FAQ
+  ADD_SCHEMA
+  IMPROVE_ENTITY_CLARITY
+  CITATION_OUTREACH
+  DIGITAL_PR
+  INTERNAL_LINKING
+}
+
+enum ImpactLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum RecommendationStatus {
+  OPEN
+  PLANNED
+  IMPLEMENTED
+  DISMISSED
+}
+
+enum ActionStatus {
+  PLANNED
+  IMPLEMENTED
+  ABANDONED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  TRIALING
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+  UNPAID
+}
+
+enum UsageMetric {
+  PROVIDER_QUERY
+  SCAN
+  PROMPT
+  PROJECT
+  CRAWL_PAGE
+  AUDIT
+  AI_EXTRACTION
+}
+
+enum PublicAuditStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  RATE_LIMITED
+}
+
+// ───────────────────────── Identity (Auth.js) ─────────────────────────
+
+model User {
+  id              String    @id @default(cuid())
+  name            String?
+  email           String    @unique
+  emailVerified   DateTime? @db.Timestamptz(3)
+  image           String?
+  passwordHash    String?
+  isPlatformAdmin Boolean   @default(false)
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(3)
+
+  accounts    Account[]
+  sessions    Session[]
+  memberships OrganizationMember[]
+  scans       Scan[]               @relation("ScanTriggeredBy")
+  analyses    WebsiteAnalysis[]
+  actions     Action[]             @relation("ActionCreatedBy")
+  auditLogs   AuditLog[]
+  reportShares   ReportShare[] @relation("ReportShareCreatedBy")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime @db.Timestamptz(3)
+
+  @@unique([identifier, token])
+}
+
+// ───────────────────────────── Tenancy ─────────────────────────────
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  // Demo organizations hold seeded data only and are excluded from real analytics.
+  isDemo    Boolean  @default(false)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  members       OrganizationMember[]
+  projects      Project[]
+  subscription  Subscription?
+  usageRecords  UsageRecord[]
+  auditLogs     AuditLog[]
+  flagOverrides FeatureFlagOverride[]
+}
+
+model OrganizationMember {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String
+  role           OrgRole  @default(MEMBER)
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+}
+
+// ───────────────────────────── Projects ─────────────────────────────
+
+model Project {
+  id                    String         @id @default(cuid())
+  organizationId        String
+  name                  String
+  domain                String
+  country               String         @db.VarChar(2)
+  language              String         @db.VarChar(8)
+  locale                String         @db.VarChar(35)
+  timezone              String         @default("UTC")
+  onboardingStep        OnboardingStep @default(ANALYZE)
+  onboardingCompletedAt DateTime?      @db.Timestamptz(3)
+  archivedAt            DateTime?      @db.Timestamptz(3)
+  createdAt             DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime       @updatedAt @db.Timestamptz(3)
+
+  organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  brand               Brand?
+  competitors         Competitor[]
+  promptClusters      PromptCluster[]
+  prompts             Prompt[]
+  scans               Scan[]
+  visibilitySnapshots VisibilitySnapshot[]
+  opportunities       Opportunity[]
+  reportShares        ReportShare[]
+  websiteAnalyses     WebsiteAnalysis[]
+
+  @@unique([organizationId, domain])
+  @@index([organizationId])
+}
+
+model Brand {
+  id              String   @id @default(cuid())
+  projectId       String   @unique
+  name            String
+  domain          String
+  description     String?  @db.Text
+  industry        String?
+  aliases         String[] @default([])
+  products        Json     @default("[]")
+  services        Json     @default("[]")
+  targetCustomers String[] @default([])
+  markets         String[] @default([])
+  topics          String[] @default([])
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(3)
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model Competitor {
+  id         String       @id @default(cuid())
+  projectId  String
+  name       String
+  domain     String?
+  aliases    String[]     @default([])
+  // Why it was suggested and how confident the model was (AI suggestions only).
+  reason     String?      @db.Text
+  confidence Float?
+  isActive   Boolean      @default(true)
+  source     EntitySource @default(USER)
+  createdAt  DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime     @updatedAt @db.Timestamptz(3)
+
+  project             Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  mentions            BrandMention[]
+  citations           Citation[]
+  visibilitySnapshots VisibilitySnapshot[]
+
+  @@unique([projectId, name])
+  @@index([projectId, isActive])
+}
+
+model PromptCluster {
+  id        String   @id @default(cuid())
+  projectId String
+  name      String
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  project Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  prompts Prompt[]
+
+  @@unique([projectId, name])
+}
+
+model Prompt {
+  id               String          @id @default(cuid())
+  projectId        String
+  clusterId        String?
+  text             String
+  intent           PromptIntent
+  category         PromptCategory?
+  country          String          @db.VarChar(2)
+  language         String          @db.VarChar(8)
+  // 1 (lowest) – 5 (highest) commercial priority.
+  priority         Int             @default(3)
+  opportunityScore Float?
+  reason           String?         @db.Text
+  isActive         Boolean         @default(true)
+  // Set when a user approves the prompt for tracking; null = not approved.
+  approvedAt       DateTime?       @db.Timestamptz(3)
+  // Set on any explicit review decision; null = never reviewed (fresh suggestion).
+  reviewedAt       DateTime?       @db.Timestamptz(3)
+  source           EntitySource    @default(USER)
+  createdAt        DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime        @updatedAt @db.Timestamptz(3)
+
+  project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  cluster       PromptCluster? @relation(fields: [clusterId], references: [id], onDelete: SetNull)
+  scanJobs      ScanJob[]
+  responses     AIResponse[]
+  opportunities Opportunity[]
+
+  @@unique([projectId, text, country, language])
+  @@index([projectId, isActive])
+}
+
+/// One onboarding website analysis run (crawl + extraction). Append-only:
+/// re-analysis creates a new row so history is preserved.
+model WebsiteAnalysis {
+  id            String                @id @default(cuid())
+  projectId     String
+  status        WebsiteAnalysisStatus @default(RUNNING)
+  // AI = model extraction; DETERMINISTIC = metadata-only fallback (no AI configured or AI failed).
+  method        ExtractionMethod?
+  requestedUrl  String
+  homepageUrl   String?
+  site          String?
+  robotsStatus  String?
+  pagesCrawled  Int                   @default(0)
+  // Per-page summaries (url, title, description, h1, wordCount) — not full page text.
+  pages         Json                  @default("[]")
+  failures      Json                  @default("[]")
+  // Validated extraction output (brand profile) and any AI failure details.
+  extraction    Json?
+  aiProvider    String?
+  aiModel       String?
+  aiAttempts    Int                   @default(0)
+  inputTokens   Int?
+  outputTokens  Int?
+  estimatedCost Decimal               @default(0) @db.Decimal(12, 6)
+  errorCode     String?
+  errorMessage  String?
+  durationMs    Int?
+  createdById   String?
+  createdAt     DateTime              @default(now()) @db.Timestamptz(3)
+  completedAt   DateTime?             @db.Timestamptz(3)
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User?   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([projectId, createdAt])
+  @@index([createdAt])
+}
+
+// ───────────────────────── Providers & scans ─────────────────────────
+
+model AIProvider {
+  id                String   @id @default(cuid())
+  // Stable adapter key, e.g. "openai", "gemini", "perplexity".
+  slug              String   @unique
+  displayName       String
+  isEnabled         Boolean  @default(false)
+  maxConcurrency    Int      @default(2)
+  requestsPerMinute Int      @default(30)
+  dailyQueryCap     Int      @default(2000)
+  createdAt         DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime @updatedAt @db.Timestamptz(3)
+
+  models              AIModel[]
+  scanJobs            ScanJob[]
+  responses           AIResponse[]
+  visibilitySnapshots VisibilitySnapshot[]
+}
+
+model AIModel {
+  id              String   @id @default(cuid())
+  providerId      String
+  modelId         String
+  displayName     String
+  inputCostPer1M  Decimal  @db.Decimal(12, 6)
+  outputCostPer1M Decimal  @db.Decimal(12, 6)
+  // Flat per-request fees (e.g. search surcharges), USD.
+  requestCost     Decimal  @default(0) @db.Decimal(12, 6)
+  isDefault       Boolean  @default(false)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(3)
+
+  provider  AIProvider   @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  scanJobs  ScanJob[]
+  responses AIResponse[]
+
+  @@unique([providerId, modelId])
+}
+
+model Scan {
+  id                  String              @id @default(cuid())
+  projectId           String
+  status              ScanStatus          @default(QUEUED)
+  scanType            ScanType            @default(MANUAL)
+  // Pre-dispatch plan: expectedQueryCount = promptCount × providerCount.
+  promptCount         Int                 @default(0)
+  providerCount       Int                 @default(0)
+  expectedQueryCount  Int
+  // Snapshot of providers used/unavailable and limits applied at dispatch time.
+  plan                Json                @default("{}")
+  completedCount      Int                 @default(0)
+  failedCount         Int                 @default(0)
+  skippedCount        Int                 @default(0)
+  estimatedCost       Decimal             @default(0) @db.Decimal(12, 6)
+  actualCost          Decimal             @default(0) @db.Decimal(12, 6)
+  errorSummary        String?             @db.Text
+  // Response analysis + visibility snapshots, run after the scan finalizes.
+  analysisStatus      ScanAnalysisStatus?
+  analysisError       String?             @db.Text
+  analysisCompletedAt DateTime?           @db.Timestamptz(3)
+  triggeredById       String?
+  isDemo              Boolean             @default(false)
+  createdAt           DateTime            @default(now()) @db.Timestamptz(3)
+  startedAt           DateTime?           @db.Timestamptz(3)
+  completedAt         DateTime?           @db.Timestamptz(3)
+  updatedAt           DateTime            @updatedAt @db.Timestamptz(3)
+
+  project             Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  triggeredBy         User?                @relation("ScanTriggeredBy", fields: [triggeredById], references: [id], onDelete: SetNull)
+  jobs                ScanJob[]
+  responses           AIResponse[]
+  visibilitySnapshots VisibilitySnapshot[]
+  opportunities       Opportunity[]
+  actionMeasurements  ActionMeasurement[]
+
+  @@index([projectId, createdAt])
+  @@index([status])
+}
+
+model ScanJob {
+  id         String        @id @default(cuid())
+  scanId     String
+  promptId   String
+  providerId String
+  modelId    String?
+  country    String        @db.VarChar(2)
+  language   String        @db.VarChar(8)
+  status     ScanJobStatus @default(PENDING)
+  attempts   Int           @default(0)
+  errorCode  String?
+  lastError  String?       @db.Text
+  createdAt  DateTime      @default(now()) @db.Timestamptz(3)
+  startedAt  DateTime?     @db.Timestamptz(3)
+  finishedAt DateTime?     @db.Timestamptz(3)
+  updatedAt  DateTime      @updatedAt @db.Timestamptz(3)
+
+  scan     Scan        @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  prompt   Prompt      @relation(fields: [promptId], references: [id], onDelete: Cascade)
+  provider AIProvider  @relation(fields: [providerId], references: [id])
+  model    AIModel?    @relation(fields: [modelId], references: [id])
+  response AIResponse?
+
+  // Idempotency guard: one job per prompt × provider per scan.
+  @@unique([scanId, promptId, providerId])
+  @@index([scanId, status])
+  @@index([providerId, createdAt])
+}
+
+/// Immutable: UPDATE is rejected by a database trigger (see migration scan_pipeline).
+model AIResponse {
+  id             String   @id @default(cuid())
+  scanId         String
+  scanJobId      String   @unique
+  promptId       String
+  providerId     String
+  modelId        String?
+  // Model identifier string as reported by the provider.
+  model          String
+  country        String   @db.VarChar(2)
+  language       String   @db.VarChar(8)
+  // Snapshot of the prompt text at query time (prompts may be edited later).
+  promptText     String   @db.Text
+  rawText        String   @db.Text
+  normalizedText String   @db.Text
+  latencyMs      Int
+  inputTokens    Int?
+  outputTokens   Int?
+  estimatedCost  Decimal  @default(0) @db.Decimal(12, 6)
+  metadata       Json     @default("{}")
+  isDemo         Boolean  @default(false)
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  scan      Scan               @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  scanJob   ScanJob            @relation(fields: [scanJobId], references: [id], onDelete: Cascade)
+  prompt    Prompt             @relation(fields: [promptId], references: [id], onDelete: Cascade)
+  provider  AIProvider         @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  aiModel   AIModel?           @relation(fields: [modelId], references: [id], onDelete: Restrict)
+  mentions  BrandMention[]
+  citations Citation[]
+  analyses  ResponseAnalysis[]
+
+  @@index([promptId, createdAt])
+  @@index([scanId])
+  @@index([providerId, createdAt])
+}
+
+// ───────────────────────────── Analysis ─────────────────────────────
+// Analysis rows are append-only (UPDATE rejected by trigger). Re-analysis
+// writes a new analysisVersion instead of changing history.
+
+/// One analysis of one AI answer. Exists even when nothing was mentioned,
+/// so "analyzed, no mentions" is distinguishable from "not analyzed".
+model ResponseAnalysis {
+  id                     String           @id @default(cuid())
+  responseId             String
+  analysisVersion        Int
+  method                 ExtractionMethod
+  primaryMentioned       Boolean
+  primaryPosition        Int?
+  primarySentiment       Float?
+  recommendationStrength Float?
+  primaryCited           Boolean
+  brandsMentionedCount   Int
+  citationCount          Int
+  // Full validated AnalysisResult (Zod) for audit/debugging.
+  result                 Json
+  createdAt              DateTime         @default(now()) @db.Timestamptz(3)
+
+  response AIResponse @relation(fields: [responseId], references: [id], onDelete: Cascade)
+
+  @@unique([responseId, analysisVersion])
+}
+
+model BrandMention {
+  id                     String           @id @default(cuid())
+  responseId             String
+  analysisVersion        Int              @default(1)
+  competitorId           String?
+  brandName              String
+  brandDomain            String?
+  mentionType            MentionType
+  // 1-based order of first appearance among detected brands.
+  position               Int
+  // -1 (negative) … 1 (positive).
+  sentiment              Float?
+  // 0 … 1: how strongly the answer recommends the brand.
+  recommendationStrength Float?
+  confidence             Float
+  isPrimaryBrand         Boolean
+  extractionMethod       ExtractionMethod @default(DETERMINISTIC)
+  occurrences            Int              @default(1)
+  // First sentence mentioning the brand (shown as evidence in the UI).
+  snippet                String?          @db.Text
+  createdAt              DateTime         @default(now()) @db.Timestamptz(3)
+
+  response   AIResponse  @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  competitor Competitor? @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+
+  @@index([responseId, analysisVersion])
+  @@index([competitorId])
+}
+
+model Citation {
+  id              String        @id @default(cuid())
+  responseId      String
+  analysisVersion Int           @default(1)
+  url             String        @db.Text
+  normalizedUrl   String        @db.Text
+  domain          String
+  title           String?
+  position        Int
+  ownerType       CitationOwner @default(THIRD_PARTY)
+  competitorId    String?
+  createdAt       DateTime      @default(now()) @db.Timestamptz(3)
+
+  response   AIResponse  @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  competitor Competitor? @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+
+  @@index([responseId, analysisVersion])
+  @@index([domain])
+}
+
+model VisibilitySnapshot {
+  id              String   @id @default(cuid())
+  projectId       String
+  scanId          String?
+  // null = aggregated across providers.
+  providerId      String?
+  // null = primary brand; otherwise the competitor being measured.
+  competitorId    String?
+  country         String   @db.VarChar(2)
+  language        String   @db.VarChar(8)
+  date            DateTime @db.Date
+  visibilityScore Float
+  mentionRate     Float
+  shareOfVoice    Float
+  averagePosition Float?
+  citationRate    Float
+  sentimentScore  Float?
+  sampleSize      Int
+  weightsVersion  String
+  isDemo          Boolean  @default(false)
+  createdAt       DateTime @default(now()) @db.Timestamptz(3)
+
+  project    Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  scan       Scan?       @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  provider   AIProvider? @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  competitor Competitor? @relation(fields: [competitorId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, date])
+  @@index([projectId, providerId, date])
+}
+
+// ─────────────────────── Recommend / fix / measure ───────────────────────
+
+model Opportunity {
+  id              String            @id @default(cuid())
+  projectId       String
+  promptId        String?
+  scanId          String?
+  type            OpportunityType
+  title           String
+  description     String            @db.Text
+  evidence        Json              @default("{}")
+  impactScore     Float
+  confidenceScore Float
+  status          OpportunityStatus @default(OPEN)
+  // Stable key of (type, subject) so repeated scans update rather than duplicate.
+  fingerprint     String
+  // Last time the rules still detected it; RESOLVED when a later evaluation no longer does.
+  lastDetectedAt  DateTime          @default(now()) @db.Timestamptz(3)
+  resolvedAt      DateTime?         @db.Timestamptz(3)
+  dismissedAt     DateTime?         @db.Timestamptz(3)
+  createdAt       DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime          @updatedAt @db.Timestamptz(3)
+
+  project         Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  prompt          Prompt?          @relation(fields: [promptId], references: [id], onDelete: SetNull)
+  scan            Scan?            @relation(fields: [scanId], references: [id], onDelete: SetNull)
+  recommendations Recommendation[]
+
+  @@unique([projectId, fingerprint])
+  @@index([projectId, status, impactScore])
+}
+
+model Recommendation {
+  id              String               @id @default(cuid())
+  opportunityId   String
+  type            RecommendationType
+  title           String
+  // WHY
+  reason          String               @db.Text
+  // HOW
+  suggestedAction String               @db.Text
+  // WHERE
+  targetUrl       String?
+  estimatedImpact ImpactLevel
+  status          RecommendationStatus @default(OPEN)
+  createdAt       DateTime             @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime             @updatedAt @db.Timestamptz(3)
+
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  actions     Action[]
+
+  @@unique([opportunityId, type])
+  @@index([opportunityId])
+}
+
+model Action {
+  id                String       @id @default(cuid())
+  recommendationId  String
+  status            ActionStatus @default(PLANNED)
+  plannedAt         DateTime     @default(now()) @db.Timestamptz(3)
+  implementedAt     DateTime?    @db.Timestamptz(3)
+  implementationUrl String?
+  notes             String?      @db.Text
+  // Visibility of the opportunity's scope (prompt or project) in the 30 days before implementation.
+  baselineScore     Float?
+  baselineAnswers   Int?
+  // Prompts the before/after comparison covers, fixed at implementation (empty = whole project).
+  scopePromptIds    String[]     @default([])
+  createdById       String?
+  createdAt         DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime     @updatedAt @db.Timestamptz(3)
+
+  recommendation Recommendation      @relation(fields: [recommendationId], references: [id], onDelete: Cascade)
+  createdBy      User?               @relation("ActionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  measurements   ActionMeasurement[]
+
+  @@index([recommendationId])
+}
+
+/// Observed change after implementation. Never implies causation.
+model ActionMeasurement {
+  id                      String   @id @default(cuid())
+  actionId                String
+  scanId                  String?
+  measuredAt              DateTime @default(now()) @db.Timestamptz(3)
+  daysSinceImplementation Int
+  beforeScore             Float
+  afterScore              Float
+  delta                   Float
+  // Answers the after-score is based on (sample size shown next to the change).
+  afterAnswers            Int
+
+  action Action @relation(fields: [actionId], references: [id], onDelete: Cascade)
+  // Cascade (not SET NULL): measurements are append-only and reject UPDATEs.
+  scan   Scan?  @relation(fields: [scanId], references: [id], onDelete: Cascade)
+
+  @@unique([actionId, scanId])
+  @@index([actionId, measuredAt])
+}
+
+// ───────────────────────── Billing & usage ─────────────────────────
+
+model Subscription {
+  id                   String             @id @default(cuid())
+  organizationId       String             @unique
+  planTier             PlanTier           @default(FREE)
+  status               SubscriptionStatus @default(ACTIVE)
+  stripeCustomerId     String?            @unique
+  stripeSubscriptionId String?            @unique
+  stripePriceId        String?
+  currentPeriodStart   DateTime?          @db.Timestamptz(3)
+  currentPeriodEnd     DateTime?          @db.Timestamptz(3)
+  cancelAtPeriodEnd    Boolean            @default(false)
+  createdAt            DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime           @updatedAt @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+/// Append-only usage ledger used for limits and cost reporting.
+model UsageRecord {
+  id             String      @id @default(cuid())
+  organizationId String
+  metric         UsageMetric
+  quantity       Int         @default(1)
+  costUsd        Decimal     @default(0) @db.Decimal(12, 6)
+  // UTC day bucket, "YYYY-MM-DD".
+  periodKey      String      @db.VarChar(10)
+  providerSlug   String?
+  referenceId    String?
+  createdAt      DateTime    @default(now()) @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, metric, periodKey])
+  @@index([providerSlug, periodKey])
+}
+
+// ───────────────────────────── Platform ─────────────────────────────
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  organizationId String?
+  actorId        String?
+  action         String
+  entityType     String
+  entityId       String?
+  metadata       Json     @default("{}")
+  ip             String?
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  actor        User?         @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([entityType, entityId])
+}
+
+/// Global key/value settings, e.g. "scan.killSwitch".
+model SystemSetting {
+  key       String   @id
+  value     Json
+  updatedBy String?
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+}
+
+model FeatureFlag {
+  key         String   @id
+  // null = inherit the FEATURE_* environment default.
+  isEnabled   Boolean?
+  description String?
+  updatedAt   DateTime @updatedAt @db.Timestamptz(3)
+
+  overrides FeatureFlagOverride[]
+}
+
+model FeatureFlagOverride {
+  id             String  @id @default(cuid())
+  flagKey        String
+  organizationId String
+  isEnabled      Boolean
+
+  flag         FeatureFlag  @relation(fields: [flagKey], references: [key], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([flagKey, organizationId])
+}
+
+model ReportShare {
+  id        String    @id @default(cuid())
+  projectId String
+  // SHA-256 of the share token; the raw token is shown once.
+  tokenHash String    @unique
+  title     String?
+  // White-label settings (agency name, accent colour; logo later) for agency reports.
+  branding  Json      @default("{}")
+  // Date range the report covers ("7d" | "30d" | "90d"); data is live within that window.
+  range        String    @default("30d") @db.VarChar(8)
+  createdById  String?
+  viewCount    Int       @default(0)
+  lastViewedAt DateTime? @db.Timestamptz(3)
+  expiresAt DateTime? @db.Timestamptz(3)
+  revokedAt DateTime? @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User?   @relation("ReportShareCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([projectId])
+}
+
+model PublicAudit {
+  id          String            @id @default(cuid())
+  domain      String
+  ipHash      String
+  status      PublicAuditStatus @default(PENDING)
+  result      Json?
+  convertedTo String?
+  createdAt   DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt   DateTime          @updatedAt @db.Timestamptz(3)
+
+  @@index([ipHash, createdAt])
+  @@index([domain, createdAt])
+}
+
+/// Stripe webhook events we've received; makes processing idempotent (Stripe delivers at least once).
+model StripeEvent {
+  id          String    @id
+  type        String
+  receivedAt  DateTime  @default(now()) @db.Timestamptz(3)
+  processedAt DateTime? @db.Timestamptz(3)
+  error       String?   @db.Text
+
+  @@index([receivedAt])
+}
