@@ -243,7 +243,8 @@ describe("scan admission limits", () => {
     // More active prompts than the plan allows (e.g. after a downgrade): the top 10 by priority are scanned, not none.
     const big = await setupProject(Array.from({ length: 11 }, (_, i) => `prompt ${i}`), "FREE");
     const low = await db.prompt.findFirstOrThrow({ where: { projectId: big.project.id, text: "prompt 10" } });
-    await db.prompt.update({ where: { id: low.id }, data: { priority: 1 } });
+    // Lowest priority and newest, so it's unambiguously the one left out.
+    await db.prompt.update({ where: { id: low.id }, data: { priority: 1, createdAt: new Date(Date.now() + 60_000) } });
     const preview = await previewScan(big.user.id, big.project.id, noQueue());
     expect(preview).toMatchObject({ promptCount: 10, promptsOverLimit: 1, promptLimit: 10, blockedReason: undefined });
     const bigScan = await createScan(big.user.id, big.project.id, {}, noQueue());

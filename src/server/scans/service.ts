@@ -61,13 +61,14 @@ async function isDemoProject(projectId: string) {
 /**
  * Active prompts in scan order (priority, then oldest first). When a plan
  * allows fewer than are active (e.g. after a downgrade), only the top ones
- * are scanned; the rest stay tracked and resume on upgrade.
+ * are scanned; the rest stay tracked and resume on upgrade. Ties fall back
+ * to id so the selection never changes between preview and scan.
  */
 async function activePrompts(projectId: string) {
   return db.prompt.findMany({
     where: { projectId, isActive: true },
     select: { id: true, text: true, country: true, language: true },
-    orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
+    orderBy: [{ priority: "desc" }, { createdAt: "asc" }, { id: "asc" }],
   });
 }
 
