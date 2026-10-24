@@ -108,7 +108,8 @@ describe("scans", () => {
     const ctx = await org("GROWTH", "CANCELED");
     const p = await project(ctx, 12);
     expect(await getOrgPlan(ctx.org.id)).toMatchObject({ tier: "FREE" });
-    await expect(createScan(ctx.user.id, p.id, {}, noQueue())).rejects.toMatchObject({ code: "LIMIT_EXCEEDED", details: { limit: "prompts", max: 10, used: 12 } });
+    const scan = await createScan(ctx.user.id, p.id, {}, noQueue());
+    expect(scan.promptCount).toBe(10);
   });
 });
 

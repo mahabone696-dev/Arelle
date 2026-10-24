@@ -135,7 +135,7 @@ export default async function BillingPage({ params, searchParams }: { params: Pr
                       <span className="min-w-0 truncate">{p.name}</span>
                       <span className={cn("tabular whitespace-nowrap text-xs", p.overPromptLimit || !p.scanning ? "text-destructive" : "text-muted-foreground")}>
                         {!p.scanning ? "not scanning · " : ""}
-                        {p.activePrompts} / {o.plan.limits.prompts} prompts
+                        {p.activePrompts} / {o.plan.limits.prompts} prompts{p.overPromptLimit && p.scanning ? " · top " + o.plan.limits.prompts + " scanned" : ""}
                       </span>
                     </div>
                   ))}

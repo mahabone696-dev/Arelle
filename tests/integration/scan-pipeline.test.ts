@@ -234,14 +234,23 @@ describe("scan admission limits", () => {
     expect(await db.scan.count({ where: { projectId: project.id } })).toBe(0);
   });
 
-  it("enforces plan limits: FREE allows 1 manual scan/day and 10 prompts", async () => {
+  it("enforces plan limits: FREE allows 1 manual scan/day and scans its top 10 prompts", async () => {
     const free = await setupProject(FIVE, "FREE");
     const s = await createScan(free.user.id, free.project.id, {}, noQueue());
     await db.scan.update({ where: { id: s.id }, data: { status: "COMPLETED" } });
     await expect(createScan(free.user.id, free.project.id, {}, noQueue())).rejects.toMatchObject({ code: "LIMIT_EXCEEDED" });
 
+    // More active prompts than the plan allows (e.g. after a downgrade): the top 10 by priority are scanned, not none.
     const big = await setupProject(Array.from({ length: 11 }, (_, i) => `prompt ${i}`), "FREE");
-    await expect(createScan(big.user.id, big.project.id, {}, noQueue())).rejects.toMatchObject({ code: "LIMIT_EXCEEDED", message: expect.stringContaining("10 prompts") });
+    const low = await db.prompt.findFirstOrThrow({ where: { projectId: big.project.id, text: "prompt 10" } });
+    await db.prompt.update({ where: { id: low.id }, data: { priority: 1 } });
+    const preview = await previewScan(big.user.id, big.project.id, noQueue());
+    expect(preview).toMatchObject({ promptCount: 10, promptsOverLimit: 1, promptLimit: 10, blockedReason: undefined });
+    const bigScan = await createScan(big.user.id, big.project.id, {}, noQueue());
+    const jobs = await db.scanJob.findMany({ where: { scanId: bigScan.id }, select: { promptId: true } });
+    expect(new Set(jobs.map((j) => j.promptId)).size).toBe(10);
+    expect(jobs.some((j) => j.promptId === low.id)).toBe(false);
+    expect((await db.scan.findUniqueOrThrow({ where: { id: bigScan.id } })).plan).toMatchObject({ limits: { promptLimit: 10, promptsOverLimit: 1 } });
   });
 
   it("enforces the configurable daily query cap before dispatch, counting earlier scans", async () => {

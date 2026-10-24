@@ -26,7 +26,6 @@ Data is never deleted on a downgrade.
 **Projects.** Checked in `createProject` under a per-organization advisory lock, so concurrent creations can't exceed the limit. After a downgrade, only the oldest projects up to the limit keep scanning; the rest stay readable.
 
 **Scans.** Scan admission (inside its locked transaction) checks:
-- active prompts against the plan limit;
 - whether the project is within the plan;
 - cadence since the last scan that ran (failed or cancelled scans don't count);
 - manual scans per day;
@@ -34,7 +33,7 @@ Data is never deleted on a downgrade.
 
 The worker's runtime quota re-checks the daily cap before every paid call. The scan preview runs the same checks read-only and says why a scan is blocked, with a "See plans" link when an upgrade would lift it.
 
-**Prompts.** Approving prompts in onboarding is capped at the plan's limit.
+**Prompts.** Approving prompts in onboarding is capped at the plan's limit. If a project has more active prompts than its plan allows (after a downgrade or a lapsed subscription), scans include only the top prompts by priority (oldest first on ties) up to the limit, rather than being refused. The others stay tracked and are scanned again after an upgrade. The scan preview and the billing page say how many are skipped, and each scan records `promptLimit` and `promptsOverLimit` in its plan.
 
 **Action Engine.** Recommendations, plans, implementations and measurements are refused with `FEATURE_DISABLED` below Growth. Opportunities stay visible on every plan, and recommendations keep being generated so they appear immediately after an upgrade.
 

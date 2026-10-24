@@ -567,7 +567,7 @@ Verified end to end against local stand-ins (documented response formats), throu
 Plans, server-side limits, Stripe Checkout, Billing Portal and webhooks, the billing page, and upgrade prompts are all built; see [BILLING.md](BILLING.md).
 - **Effective tier:** canceled, unpaid, paused and incomplete subscriptions fall back to Free; past-due keeps the plan (grace).
 - **Project limit:** enforced under a per-organization lock.
-- **Downgrades:** only the oldest projects keep scanning.
+- **Downgrades:** only the oldest projects keep scanning, and a project with more active prompts than the plan allows scans its top prompts by priority instead of being blocked.
 - **Scan admission:** checks cadence and the monthly query allowance. Failed or cancelled scans no longer use up the daily manual-scan allowance.
 - **Action Engine:** Growth and up, enforced in the service and shown as upgrade cards in the UI.
 - **Webhook:** signature-verified, idempotent (`StripeEvent`), and re-fetches the subscription from Stripe.

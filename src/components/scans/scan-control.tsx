@@ -17,6 +17,8 @@ export interface ScanPreviewData {
   unavailable: Array<{ displayName: string; label: string }>;
   blockedReason?: string;
   upgradeRequired?: boolean;
+  promptsOverLimit?: number;
+  promptLimit?: number;
 }
 
 interface Progress {
@@ -152,6 +154,14 @@ export function ScanControl({
               </div>
             ) : null}
             {preview.unavailable.length ? <div className="mt-1 text-xs text-muted-foreground">Not included: {preview.unavailable.map((u) => `${u.displayName} — ${u.label}`).join("; ")}</div> : null}
+            {preview.promptsOverLimit ? (
+              <div className="mt-1 text-xs text-muted-foreground">
+                Your plan scans {preview.promptLimit} prompts, so your top {preview.promptLimit} by priority are included and {preview.promptsOverLimit} {preview.promptsOverLimit === 1 ? "is" : "are"} skipped.{" "}
+                <Link href={`/${orgSlug}/billing`} className="font-medium text-foreground underline underline-offset-2">
+                  See plans
+                </Link>
+              </div>
+            ) : null}
           </div>
           <div className="flex gap-2">
             <Button

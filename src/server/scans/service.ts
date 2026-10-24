@@ -42,6 +42,9 @@ export function defaultScanDeps(): ScanServiceDeps {
 export interface ScanPreview extends ScanPlan {
   providers: Array<{ slug: string; displayName: string; model: string; localized: boolean }>;
   unavailable: ProviderAvailability["unavailable"];
+  /** Active prompts left out of this scan because of the plan's prompt limit. */
+  promptsOverLimit: number;
+  promptLimit: number;
   killSwitch: boolean;
   blockedReason?: string;
   /** The block is a plan limit an upgrade would lift. */
@@ -55,6 +58,11 @@ async function isDemoProject(projectId: string) {
   return p?.organization.isDemo ?? false;
 }
 
+/**
+ * Active prompts in scan order (priority, then oldest first). When a plan
+ * allows fewer than are active (e.g. after a downgrade), only the top ones
+ * are scanned; the rest stay tracked and resume on upgrade.
+ */
 async function activePrompts(projectId: string) {
   return db.prompt.findMany({
     where: { projectId, isActive: true },
@@ -70,9 +78,6 @@ type Client = Prisma.TransactionClient | typeof db;
  * locked transaction; the preview runs it read-only to explain the block.
  */
 async function assertPlanAllows(client: Client, organizationId: string, projectId: string, plan: { promptCount: number; expectedQueryCount: number }, tier: PlanTier, limits: PlanLimits) {
-  if (plan.promptCount > limits.prompts) {
-    throw limitError(`Your ${tierName(tier)} plan scans up to ${limits.prompts} prompts per project; ${plan.promptCount} are active. Deactivate some prompts or upgrade.`, { limit: "prompts", tier, max: limits.prompts, used: plan.promptCount });
-  }
   await assertProjectWithinPlan(client, organizationId, projectId, tier, limits);
   // Cadence ("weekly" / "daily" per plan): scans that actually ran count; failed or cancelled ones don't.
   const last = await client.scan.findFirst({ where: { projectId, isDemo: false, status: { notIn: ["FAILED", "CANCELLED"] } }, orderBy: { createdAt: "desc" }, select: { createdAt: true } });
@@ -90,7 +95,8 @@ async function assertPlanAllows(client: Client, organizationId: string, projectI
 /** What a scan would do right now (for the confirmation UI). Never enqueues anything. */
 export async function previewScan(userId: string, projectId: string, deps: ScanServiceDeps = defaultScanDeps()): Promise<ScanPreview> {
   const access = await requireProjectAccess(userId, projectId, "project:read");
-  const [kill, availability, prompts, demo, orgPlan] = await Promise.all([getScanKillSwitch(), deps.availability(), activePrompts(projectId), isDemoProject(projectId), getOrgPlan(access.organizationId)]);
+  const [kill, availability, allPrompts, demo, orgPlan] = await Promise.all([getScanKillSwitch(), deps.availability(), activePrompts(projectId), isDemoProject(projectId), getOrgPlan(access.organizationId)]);
+  const prompts = allPrompts.slice(0, orgPlan.limits.prompts);
   const plan = await computeScanPlan(projectId, prompts, availability.ready);
   let blockedReason: string | undefined;
   let upgradeRequired = false;
@@ -111,6 +117,8 @@ export async function previewScan(userId: string, projectId: string, deps: ScanS
     ...plan,
     providers: availability.ready.map((p) => ({ slug: p.slug, displayName: p.displayName, model: p.modelId, localized: p.adapter.capabilities.location })),
     unavailable: availability.unavailable,
+    promptsOverLimit: allPrompts.length - prompts.length,
+    promptLimit: orgPlan.limits.prompts,
     killSwitch: kill.enabled,
     blockedReason,
     upgradeRequired,
@@ -135,16 +143,18 @@ export async function createScan(userId: string, projectId: string, options: { s
     throw new AppError("UNAVAILABLE", "No AI engines are available to scan right now.", { unavailable: availability.unavailable });
   }
 
-  const prompts = await activePrompts(projectId);
-  if (!prompts.length) throw new AppError("VALIDATION", "Approve at least one prompt before running a scan.");
+  const allPrompts = await activePrompts(projectId);
+  if (!allPrompts.length) throw new AppError("VALIDATION", "Approve at least one prompt before running a scan.");
+
+  // Effective tier: a canceled or unpaid subscription falls back to Free limits.
+  const { tier, limits } = await getOrgPlan(access.organizationId);
+  const prompts = allPrompts.slice(0, limits.prompts);
+  const promptsOverLimit = allPrompts.length - prompts.length;
 
   const plan = await computeScanPlan(projectId, prompts, availability.ready);
   if (plan.expectedQueryCount > cfg.maxQueriesPerScan) {
     throw new AppError("LIMIT_EXCEEDED", `This scan would run ${plan.expectedQueryCount} queries; the maximum per scan is ${cfg.maxQueriesPerScan}.`);
   }
-
-  // Effective tier: a canceled or unpaid subscription falls back to Free limits.
-  const { tier, limits } = await getOrgPlan(access.organizationId);
 
   const orgCap = Math.min(limits.queriesPerDay, cfg.orgDailyQueryCap);
   const since = utcDayStart();
@@ -195,7 +205,7 @@ export async function createScan(userId: string, projectId: string, options: { s
           providers: availability.ready.map((p) => ({ providerId: p.providerId, slug: p.slug, model: p.modelId })),
           unavailable: availability.unavailable,
           perProvider: plan.perProvider,
-          limits: { planTier: tier, orgDailyQueryCap: orgCap, orgUsedBefore: orgUsed, queriesPerMonth: limits.queriesPerMonth, monthUsedBefore: monthUsed },
+          limits: { planTier: tier, promptLimit: limits.prompts, promptsOverLimit, orgDailyQueryCap: orgCap, orgUsedBefore: orgUsed, queriesPerMonth: limits.queriesPerMonth, monthUsedBefore: monthUsed },
         },
       },
     });

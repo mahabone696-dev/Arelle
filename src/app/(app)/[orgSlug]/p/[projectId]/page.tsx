@@ -126,6 +126,8 @@ export default async function OverviewPage({
                 .map((u) => ({ displayName: u.displayName, label: UNAVAILABLE_LABELS[u.reason] })),
               blockedReason: preview.blockedReason,
               upgradeRequired: preview.upgradeRequired,
+              promptsOverLimit: preview.promptsOverLimit,
+              promptLimit: preview.promptLimit,
             }}
           />
         </Card>
